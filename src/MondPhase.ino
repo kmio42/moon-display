@@ -26,8 +26,8 @@
 #include "credentials.h"
 
 // Standort (Dezimalgrad)
-constexpr double LATITUDE  =  48.137;   // z.B. München
-constexpr double LONGITUDE =  11.576;
+constexpr double LATITUDE  =  49.821;
+constexpr double LONGITUDE =   8.869;
 
 // NTP
 constexpr long   GMT_OFFSET_SEC  = 0;    // UTC verwenden; Zeitzone lokal egal
@@ -35,18 +35,10 @@ constexpr int    DAYLIGHT_OFFSET = 0;
 constexpr char   NTP_SERVER[]    = "pool.ntp.org";
 
 // Mond-Rendering
-constexpr int MOON_RADIUS = 240;         // Pixel
 extern const  uint16_t FullMoon[];
 
-// ── Nutzer-Deklarationen (hier einfügen oder in separater Datei) ─────────────
-// Beispiel:
-//   static astro::MoonPhasePixel outputBuffer[2 * MOON_RADIUS * 2 * MOON_RADIUS];
-//   static const astro::MoonPhasePixel* moonTexture = nullptr;
-//   static const int texSize = 0;
-//
-// Diese drei Variablen müssen HIER oder in einer anderen .ino/.cpp-Datei
-// definiert sein, bevor berechneMondPhase() aufgerufen werden kann.
 
+// Display
 
 #define TFT_CS 7
 #define TFT_DC 10
@@ -95,11 +87,9 @@ void berechneMondPhase() {
     // ── Sonnenposition ───────────────────────────────────────────────────────
     tStart = micros();
     double eklLaenge    = astro::calculateEclipticalLength(jd);
-    double trueAnomaly  = astro::calculateTrueAnomaly(jd);
-    double orbitRadius  = astro::calculateOrbitRadiusEarth(trueAnomaly); // in AE
 
     astro::RaDek sunRaDek = astro::calculateRaDek(eklLaenge, 0.0);
-    sunRaDek.distance = orbitRadius * astro::AE_TO_KM;  // in km
+    sunRaDek.distance = 149597870;  // in km (1 AE)
     tEnd = micros();
     Serial.printf("  Sonnenposition:       %lu µs\n", tEnd - tStart);
 
@@ -107,12 +97,8 @@ void berechneMondPhase() {
     tStart = micros();
     astro::MoonPosition moon = astro::calculateMoon(jd);
 
-    astro::RaDek moonRaDekRoh = astro::calculateRaDek(moon.longitude, moon.latitude);
+    astro::RaDek moonRaDek = astro::calculateRaDek(moon.longitude, moon.latitude);
 
-    // Parallaxen-Korrektur
-    double mondParallax = asin(astro::EARTH_RADIUS / moon.distance);
-    astro::RaDek moonRaDek = astro::calculateParallax(
-        moonRaDekRoh, mondParallax, siderealTime, LATITUDE);
     moonRaDek.distance = moon.distance;  // in km
     tEnd = micros();
     Serial.printf("  Mondposition:         %lu µs\n", tEnd - tStart);
@@ -125,12 +111,26 @@ void berechneMondPhase() {
 
     // ── Rendering-Vorbereitung ───────────────────────────────────────────────
     tStart = micros();
+
+    // Formel 46.2 aus "Astronomical Algorithms" von Jean Meeus.
+    // Geozenrische Elongation zwischen Sonne und Mond
     double cosPsi = sin(sunRaDek.dek) * sin(moonRaDek.dek)
                   + cos(sunRaDek.dek) * cos(moonRaDek.dek) * cos(sunRaDek.ra - moonRaDek.ra);
 
-    double i = atan2(sunRaDek.distance * sin(acos(cosPsi)),
-                     moonRaDek.distance - sunRaDek.distance * cosPsi);
-    double k = (1 + cos(i)) / 2.0;
+    
+
+    // Formel 46.3 aus "Astronomical Algorithms" von Jean Meeus.
+    // i = Phasenwinkel zwischen Sonne, Mond und Erde (gesehen vom Mond)
+    //double i = atan2(sunRaDek.distance * sin(acos(cosPsi)),
+    //                 moonRaDek.distance - sunRaDek.distance * cosPsi);
+    
+    
+    // Formel 46.1 aus "Astronomical Algorithms" von Jean Meeus.
+    // Beleuchtungsanteil des Mondes (0 = Neumond, 1 = Vollmond)
+    //double k = (1 + cos(i)) / 2.0;
+
+    // Alternative Formel für k, die direkt cosPsi verwendet (siehe Diskussion in den Kommentaren)
+    double k = (1 - cosPsi) / 2.0;
 
     double chi = atan2(cos(sunRaDek.dek) * sin(sunRaDek.ra - moonRaDek.ra),
                        sin(sunRaDek.dek) * cos(moonRaDek.dek)
