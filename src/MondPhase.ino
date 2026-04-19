@@ -5,7 +5,7 @@
  * und ruft drawMoonPhase(radius=240) auf.
  *
  * Vom Nutzer zu ergänzen:
- *   - WIFI_SSID / WIFI_PASSWORD
+ *   - WIFI_SSID_1..3 / WIFI_PASSWORD_1..3  (in credentials.h)
  *   - LATITUDE / LONGITUDE (Standort in Dezimalgrad)
  *   - outputBuffer  (MoonPhasePixel[480*480])
  *   - moonTexture   (const MoonPhasePixel* oder nullptr)
@@ -14,6 +14,7 @@
  */
 
 #include <WiFi.h>
+#include <WiFiMulti.h>
 #include <time.h>
 #include "astro.h"
 
@@ -24,6 +25,8 @@
 // ── Konfiguration ────────────────────────────────────────────────────────────
 
 #include "credentials.h"
+
+WiFiMulti wifiMulti;
 
 // Standort (Dezimalgrad)
 constexpr double LATITUDE  =  49.821;
@@ -37,9 +40,7 @@ constexpr char   NTP_SERVER[]    = "pool.ntp.org";
 // Mond-Rendering
 extern const  uint16_t FullMoon[];
 
-
 // Display
-
 #define TFT_CS 7
 #define TFT_DC 10
 
@@ -61,7 +62,7 @@ static double julianDateVonTm(const struct tm& t) {
 
 // ── Berechnung & Rendering ──────────────────────────────────────────────────
 
-void berechneMondPhase() {
+void calculateMoon() {
     unsigned long tStart, tEnd;
     unsigned long tGesamt = micros();
 
@@ -117,31 +118,31 @@ void berechneMondPhase() {
     tStart = micros();
 
     // Geozenrische Elongation zwischen Sonne und Mond
-    // Formel 46.2 aus "Astronomical Algorithms" von Jean Meeus.
+    // Formel 46.2 aus "Astronomische Algorithmen, 2. Auflage" von Jean Meeus.
     double cosPsi = sin(sunRaDek.dek) * sin(moonRaDek.dek)
                   + cos(sunRaDek.dek) * cos(moonRaDek.dek) * cos(sunRaDek.ra - moonRaDek.ra);
 
     
     // Phasenwinkel zwischen Sonne, Mond und Erde (gesehen vom Mond)
-    // Formel 46.3 aus "Astronomical Algorithms" von Jean Meeus.
+    // Formel 46.3 aus "Astronomische Algorithmen, 2. Auflage" von Jean Meeus.
     // double i = atan2(sunRaDek.distance * sin(acos(cosPsi)),
     //                 moonRaDek.distance - sunRaDek.distance * cosPsi);
     
     // Beleuchtungsanteil des Mondes (0 = Neumond, 1 = Vollmond)
-    // Formel 46.1 aus "Astronomical Algorithms" von Jean Meeus.
+    // Formel 46.1 aus "Astronomische Algorithmen, 2. Auflage" von Jean Meeus.
     //double k = (1 + cos(i)) / 2.0;
 
     // Alternative Formel für k, die direkt cosPsi verwendet
     double k = (1 - cosPsi) / 2.0;
 
     // Positionswinkel (Mitte) des beleuchteten Mondrandes 
-    // Formel 46.5 aus "Astronomical Algorithms" von Jean Meeus.
+    // Formel 46.5 aus "Astronomische Algorithmen, 2. Auflage" von Jean Meeus.
     double chi = atan2(cos(sunRaDek.dek) * sin(sunRaDek.ra - moonRaDek.ra),
                        sin(sunRaDek.dek) * cos(moonRaDek.dek)
                      - cos(sunRaDek.dek) * sin(moonRaDek.dek) * cos(sunRaDek.ra - moonRaDek.ra));
 
     // Parallaktischer Winkel des Mondes
-    // Formel 13.1 aus "Astronomical Algorithms" von Jean Meeus.
+    // Formel 13.1 aus "Astronomische Algorithmen, 2. Auflage" von Jean Meeus.
     double q = atan2(sin(siderealTime - moonRaDek.ra),
                      tan(LATITUDE * astro::DEG2RAD) * cos(moonRaDek.dek)
                    - sin(moonRaDek.dek) * cos(siderealTime - moonRaDek.ra));
@@ -167,7 +168,7 @@ void berechneMondPhase() {
     Serial.printf("  Mondachse:              %f°\n", mondAchse.axle * astro::RAD2DEG);
     Serial.printf("  Mondphase (0-1):         %f\n", phase);
     Serial.printf("  Maskenwinkel:            %f°\n", mask * astro::RAD2DEG);
-    
+
 }
 
 // ── Setup & Loop ─────────────────────────────────────────────────────────────
@@ -175,14 +176,17 @@ void berechneMondPhase() {
 void setup() {
     Serial.begin(115200);
 
-    // WLAN verbinden
-    Serial.printf("Verbinde mit %s …\n", WIFI_SSID);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    while (WiFi.status() != WL_CONNECTED) {
+    // WLAN verbinden (alle konfigurierten Netzwerke)
+    if (strlen(WIFI_SSID_1) > 0) wifiMulti.addAP(WIFI_SSID_1, WIFI_PASSWORD_1);
+    if (strlen(WIFI_SSID_2) > 0) wifiMulti.addAP(WIFI_SSID_2, WIFI_PASSWORD_2);
+    if (strlen(WIFI_SSID_3) > 0) wifiMulti.addAP(WIFI_SSID_3, WIFI_PASSWORD_3);
+    Serial.println("Suche WLAN …");
+    while (wifiMulti.run() != WL_CONNECTED) {
         delay(500);
         Serial.print('.');
     }
-    Serial.printf("\nVerbunden. IP: %s\n", WiFi.localIP().toString().c_str());
+    Serial.printf("\nVerbunden mit %s. IP: %s\n",
+        WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
 
     // NTP starten (UTC)
     configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET, NTP_SERVER);
@@ -203,13 +207,13 @@ void setup() {
         zeitInfo.tm_sec);
     tft.begin();
     tft.fillScreen(GC9A01A_BLACK);
-    berechneMondPhase();
+    calculateMoon();
 }
 
 void loop() {
     // Alle 60 Sekunden neu berechnen
     delay(60000);
-    berechneMondPhase();
+    calculateMoon();
 }
 
 void drawMoon(float phase, float rotation, float mask) {
@@ -278,13 +282,24 @@ void drawMoon(float phase, float rotation, float mask) {
       memcpy_P(&pixelColor, &FullMoon[(pixelY*240 + pixelX)], 2);
 
       if(!pixelActive) {
-        int r = (pixelColor >> 11) & 0x1F;
-        int g = (pixelColor >> 5) & 0x3F;
-        int b = pixelColor & 0x1F;
-        r = r * 0.2;
-        g = g * 0.2;
-        b = b * 0.2;
-        pixelColor = (r << 11) | (g << 5) | b;
+        // Normalisieren auf 0..1
+        float fr = ((pixelColor >> 11) & 0x1F) / 31.0f;
+        float fg = ((pixelColor >>  5) & 0x3F) / 63.0f;
+        float fb = ( pixelColor        & 0x1F) / 31.0f;
+        // Linearisieren (Gamma ≈ 2.0)
+        fr *= fr;  fg *= fg;  fb *= fb;
+        // Kontrast reduzieren: in Richtung Mittelgrau mischen
+        const float mid = 0.6f, blend = 0.3f;
+        fr = mid + (fr - mid) * blend;
+        fg = mid + (fg - mid) * blend;
+        fb = mid + (fb - mid) * blend;
+        // Stark abdunkeln
+        fr *= 0.2f;  fg *= 0.2f;  fb *= 0.2f;
+        // Gamma re-encodieren
+        fr = sqrtf(fr);  fg = sqrtf(fg);  fb = sqrtf(fb);
+        pixelColor = ((uint16_t)(fr * 31.0f + 0.01f) << 11)
+                   | ((uint16_t)(fg * 63.0f + 0.01f) <<  5)
+                   |  (uint16_t)(fb * 31.0f + 0.01f);
       }
       tft.drawPixel(x + r, y + r, pixelColor);
     }
