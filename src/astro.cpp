@@ -780,7 +780,7 @@ MoonAxle calculateMoonAxle(double jd, const MoonPosition& moon) {
 
     double rho = (-.02752 * cos(m)
                 + -.02245 * sin(F)
-                + .00684 * cos(m - 2 * F)
+                +  .00684 * cos(m - 2 * F)
                 + -.00293 * cos(2 * F)
                 + -.00085 * cos(2 * (F - D))
                 + -.00054 * cos(m - 2 * D)

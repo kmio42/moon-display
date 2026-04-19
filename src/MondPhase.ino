@@ -36,6 +36,7 @@ constexpr char   NTP_SERVER[]    = "pool.ntp.org";
 
 // Mond-Rendering
 constexpr int MOON_RADIUS = 240;         // Pixel
+extern const  uint16_t FullMoon[];
 
 // ── Nutzer-Deklarationen (hier einfügen oder in separater Datei) ─────────────
 // Beispiel:
@@ -69,6 +70,9 @@ static double julianDateVonTm(const struct tm& t) {
 // ── Berechnung & Rendering ──────────────────────────────────────────────────
 
 void berechneMondPhase() {
+    unsigned long tStart, tEnd;
+    unsigned long tGesamt = micros();
+
     // Aktuelle UTC-Zeit holen
     struct tm zeitInfo;
     if (!getLocalTime(&zeitInfo)) {
@@ -76,21 +80,31 @@ void berechneMondPhase() {
         return;
     }
 
+    tStart = micros();
     double jd = julianDateVonTm(zeitInfo);
+    tEnd = micros();
+    Serial.printf("  Julianisches Datum:   %lu µs\n", tEnd - tStart);
 
     // Lokale Sternzeit in Radiant (GMST + Längengrad-Offset)
+    tStart = micros();
     double gmstStunden  = astro::calculateSiderealTime(jd);
     double siderealTime = gmstStunden * M_PI / 12.0 + LONGITUDE * astro::DEG2RAD;
+    tEnd = micros();
+    Serial.printf("  Sternzeit:            %lu µs\n", tEnd - tStart);
 
     // ── Sonnenposition ───────────────────────────────────────────────────────
+    tStart = micros();
     double eklLaenge    = astro::calculateEclipticalLength(jd);
     double trueAnomaly  = astro::calculateTrueAnomaly(jd);
     double orbitRadius  = astro::calculateOrbitRadiusEarth(trueAnomaly); // in AE
 
     astro::RaDek sunRaDek = astro::calculateRaDek(eklLaenge, 0.0);
     sunRaDek.distance = orbitRadius * astro::AE_TO_KM;  // in km
+    tEnd = micros();
+    Serial.printf("  Sonnenposition:       %lu µs\n", tEnd - tStart);
 
     // ── Mondposition ─────────────────────────────────────────────────────────
+    tStart = micros();
     astro::MoonPosition moon = astro::calculateMoon(jd);
 
     astro::RaDek moonRaDekRoh = astro::calculateRaDek(moon.longitude, moon.latitude);
@@ -100,12 +114,17 @@ void berechneMondPhase() {
     astro::RaDek moonRaDek = astro::calculateParallax(
         moonRaDekRoh, mondParallax, siderealTime, LATITUDE);
     moonRaDek.distance = moon.distance;  // in km
+    tEnd = micros();
+    Serial.printf("  Mondposition:         %lu µs\n", tEnd - tStart);
 
     // ── Mondachse & Libration ────────────────────────────────────────────────
+    tStart = micros();
     astro::MoonAxle mondAchse = astro::calculateMoonAxle(jd, moon);
+    tEnd = micros();
+    Serial.printf("  Mondachse/Libration:  %lu µs\n", tEnd - tStart);
 
-    // ── Rendering ────────────────────────────────────────────────────────────
-    
+    // ── Rendering-Vorbereitung ───────────────────────────────────────────────
+    tStart = micros();
     double cosPsi = sin(sunRaDek.dek) * sin(moonRaDek.dek)
                   + cos(sunRaDek.dek) * cos(moonRaDek.dek) * cos(sunRaDek.ra - moonRaDek.ra);
 
@@ -120,15 +139,19 @@ void berechneMondPhase() {
     double q = atan2(sin(siderealTime - moonRaDek.ra),
                      tan(LATITUDE * astro::DEG2RAD) * cos(moonRaDek.dek)
                    - sin(moonRaDek.dek) * cos(siderealTime - moonRaDek.ra));
-    
-    double phase = k;
+
+   double phase = k;
     double mask = (chi-q+M_PI/2);
-    double rot = (q+mondAchse.axle);
+    double rot = (mondAchse.axle-q-0.389615);
+    tEnd = micros();
+    Serial.printf("  Phasenberechnung:     %lu µs\n", tEnd - tStart);
 
+    tStart = micros();
     drawMoon(phase, rot,mask);
+    tEnd = micros();
+    Serial.printf("  drawMoon:             %lu µs\n", tEnd - tStart);
 
-    // ── Hier Anzeige-Code des Nutzers einfügen ───────────────────────────────
-    // z.B. TFT-Display, LVGL, DMA-Transfer, etc.
+    Serial.printf("  ── Gesamt:            %lu µs\n", micros() - tGesamt);
 }
 
 // ── Setup & Loop ─────────────────────────────────────────────────────────────
@@ -162,7 +185,8 @@ void setup() {
         zeitInfo.tm_hour,
         zeitInfo.tm_min,
         zeitInfo.tm_sec);
-
+    tft.begin();
+    tft.fillScreen(GC9A01A_BLACK);
     berechneMondPhase();
 }
 
@@ -191,7 +215,7 @@ void drawMoon(float phase, float rotation, float mask) {
     for (int x = -r; x < r; x++) {
       int circle = x * x + y * y - r * r;
       if (circle > 0) {
-        //tft.drawPixel(x+r,y+r,ST77XX_BLACK);
+        //tft.drawPixel(x+r, y+r, ST77XX_BLACK);
         continue;
       }
       int conditionX = x * cosMask + y * sinMask;
