@@ -46,7 +46,7 @@ extern const  uint16_t FullMoon[];
 
 Adafruit_GC9A01A tft(TFT_CS, TFT_DC);
 
-// ── Hilfsfunktion: Julianisches Datum aus struct tm ─────────────────────────
+// ── Hilfsfunktionen ─────────────────────────
 
 static double julianDateVonTm(const struct tm& t) {
     return astro::calculateJulianDate(
@@ -286,17 +286,9 @@ void drawMoon(float phase, float rotation, float mask) {
         float fr = ((pixelColor >> 11) & 0x1F) / 31.0f;
         float fg = ((pixelColor >>  5) & 0x3F) / 63.0f;
         float fb = ( pixelColor        & 0x1F) / 31.0f;
-        // Linearisieren (Gamma ≈ 2.0)
-        fr *= fr;  fg *= fg;  fb *= fb;
-        // Kontrast reduzieren: in Richtung Mittelgrau mischen
-        const float mid = 0.6f, blend = 0.3f;
-        fr = mid + (fr - mid) * blend;
-        fg = mid + (fg - mid) * blend;
-        fb = mid + (fb - mid) * blend;
-        // Stark abdunkeln
-        fr *= 0.2f;  fg *= 0.2f;  fb *= 0.2f;
-        // Gamma re-encodieren
-        fr = sqrtf(fr);  fg = sqrtf(fg);  fb = sqrtf(fb);
+        //abgedunkeltes Graustufenbild für den unbeleuchteten Bereich
+        fr = fg = fb = (fr + fg + fb) / 3.0f*0.15f;
+
         pixelColor = ((uint16_t)(fr * 31.0f + 0.01f) << 11)
                    | ((uint16_t)(fg * 63.0f + 0.01f) <<  5)
                    |  (uint16_t)(fb * 31.0f + 0.01f);
