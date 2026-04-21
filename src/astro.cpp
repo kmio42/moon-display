@@ -732,6 +732,8 @@ double calculateRisingKnotMoon(double jd) {
  */
 double calculateMoonPhase(const RaDek& sunRaDek, double sunDistance,
                           const RaDek& moonRaDek, double moonDistance) {
+    // Geozenrische Elongation zwischen Sonne und Mond
+    // Formel 46.2 aus "Astronomische Algorithmen, 2. Auflage" von Jean Meeus.                        
     double cosPsi = sin(sunRaDek.dek) * sin(moonRaDek.dek)
                   + cos(sunRaDek.dek) * cos(moonRaDek.dek) * cos(sunRaDek.ra - moonRaDek.ra);
 
