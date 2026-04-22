@@ -38,7 +38,7 @@ constexpr int    DAYLIGHT_OFFSET = 0;
 constexpr char   NTP_SERVER[]    = "pool.ntp.org";
 
 // Mond-Rendering
-extern void calculateMoon(struct tm timeinfo, bool printInfo, Adafruit_GC9A01A* tft);
+extern void calculateMoon(const struct tm& timeinfo, bool printInfo, Adafruit_GC9A01A* tft);
 
 // Display
 #define TFT_CS 7
@@ -50,7 +50,7 @@ Adafruit_GC9A01A tft(TFT_CS, TFT_DC);
 enum mode { MODE_MOON, MODE_STATIC, MODE_DISPLAY, MODE_CLOCK };
 mode currentMode = MODE_MOON;
 
-
+bool wifiOn = true;
 
 // -- Serial Commands
 
@@ -151,26 +151,20 @@ SerialCommand cmd_set_time("set_time", cmd_set_time_);
 void cmd_wifi_(SerialCommands* sender)
 {
     sender->GetSerial()->println("Aktuelle WLAN-Verbindungen:");
-    for (int i = 0; i < wifiMulti.run(); i++) {
-        sender->GetSerial()->print("  ");
-        sender->GetSerial()->print(i);
-        sender->GetSerial()->print(": ");
-        sender->GetSerial()->print(WiFi.SSID(i));
-        sender->GetSerial()->print(" (");
-        sender->GetSerial()->print(WiFi.RSSI(i));
-        sender->GetSerial()->println(" dBm)");
-    }
+    sender->GetSerial()->print(WiFi.SSID());
+    sender->GetSerial()->print(" (");
+    sender->GetSerial()->print(WiFi.RSSI());
+    sender->GetSerial()->println(" dBm)");
 
     const char *arg0 = sender->Next();
     if (arg0 != nullptr) {
         if(strcmp(arg0, "on") == 0) {
             sender->GetSerial()->println("WLAN-Verbindung aktivieren...");
-            wifiMulti.addAP(WIFI_SSID_1, WIFI_PASSWORD_1);
-            wifiMulti.addAP(WIFI_SSID_2, WIFI_PASSWORD_2);
-            wifiMulti.addAP(WIFI_SSID_3, WIFI_PASSWORD_3);
+            wifiOn = true;
         } else if (strcmp(arg0, "off") == 0) {
             sender->GetSerial()->println("WLAN-Verbindung trennen...");
             WiFi.disconnect(true);
+            wifiOn = false;
         } else {
             sender->GetSerial()->println("Ungültiges Argument. Erwartet: on oder off");
         }
@@ -203,35 +197,15 @@ void setupSerialCommands() {
 void setup() {
     Serial.begin(115200);
 
+    WiFi.mode(WIFI_STA);
     // WLAN verbinden (alle konfigurierten Netzwerke)
     if (strlen(WIFI_SSID_1) > 0) wifiMulti.addAP(WIFI_SSID_1, WIFI_PASSWORD_1);
     if (strlen(WIFI_SSID_2) > 0) wifiMulti.addAP(WIFI_SSID_2, WIFI_PASSWORD_2);
     if (strlen(WIFI_SSID_3) > 0) wifiMulti.addAP(WIFI_SSID_3, WIFI_PASSWORD_3);
-    Serial.println("Suche WLAN …");
-    while (wifiMulti.run() != WL_CONNECTED) {
-        delay(500);
-        Serial.print('.');
-    }
-    Serial.printf("\nVerbunden mit %s. IP: %s\n",
-        WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
 
     // NTP starten (UTC)
     configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET, NTP_SERVER);
 
-    // Warten bis Zeit synchronisiert ist
-    struct tm zeitInfo;
-    Serial.print("Warte auf NTP-Sync …");
-    while (!getLocalTime(&zeitInfo)) {
-        delay(500);
-        Serial.print('.');
-    }
-    Serial.printf("\nZeit synchronisiert: %04d-%02d-%02d %02d:%02d:%02d UTC\n",
-        zeitInfo.tm_year + 1900,
-        zeitInfo.tm_mon  + 1,
-        zeitInfo.tm_mday,
-        zeitInfo.tm_hour,
-        zeitInfo.tm_min,
-        zeitInfo.tm_sec);
     tft.begin();
     tft.fillScreen(GC9A01A_BLACK);
 
@@ -239,16 +213,20 @@ void setup() {
     setupSerialCommands();
 }
 
-long lastMoonCalc = 0;
+unsigned long lastMoonCalc = 60000; // Erzwinge Berechnung direkt nach Start, da loop() erst nach 60s aktualisiert
+unsigned long lastWifiCheck = 0;
 
 void loop() {
-    // Alle 60 Sekunden neu berechnen
     
+    if (wifiOn && millis() - lastWifiCheck > 1000) {
+        wifiMulti.run(1000);
+        lastWifiCheck = millis();
+    }
+
     serial_commands_.ReadSerial();
-    if (currentMode == MODE_MOON && getLocalTime(nullptr) && (millis() - lastMoonCalc > 60000)) {
-            // Aktuelle UTC-Zeit holen
-        struct tm zeitInfo;
-        getLocalTime(&zeitInfo);
+    struct tm zeitInfo;
+    if (currentMode == MODE_MOON && getLocalTime(&zeitInfo) && (millis() - lastMoonCalc > 60000)) {
+        Serial.println("Updating moon display...");
         calculateMoon(zeitInfo, false, &tft);
         lastMoonCalc = millis();
     } else if (currentMode == MODE_DISPLAY) {
@@ -256,6 +234,7 @@ void loop() {
     } else if (currentMode == MODE_CLOCK) {
         // Hier könnte z.B. eine Uhrzeit-Anzeige implementiert werden
     }
+    delay(100);
     //berechneSonnenaufgang();
     //berechneMondaufgang();
 }
