@@ -1,4 +1,9 @@
+#include <Arduino.h>
+#include <Adafruit_GC9A01A.h>
+
 #include "astro.h"
+
+
 extern const uint16_t FullMoon[];
 
 #if 0
@@ -30,10 +35,10 @@ static double julianDateVonTm(const struct tm& t) {
     );
 }
 
-void calculateMoon(struct tm zeitInfo, bool printInfo, bool showDisplay = true) {
+void calculateMoon(struct tm time, bool printInfo, Adafruit_GC9A01A* tft = nullptr) {
 
     EVAL_START();
-    double jd = julianDateVonTm(zeitInfo);
+    double jd = julianDateVonTm(time);
     EVAL_END("Julianisches Datum");
 
     // Lokale Sternzeit in Radiant (GMST + Längengrad-Offset)
@@ -86,9 +91,9 @@ void calculateMoon(struct tm zeitInfo, bool printInfo, bool showDisplay = true) 
 
     double rot = (mondAchse.axle-q-0.389615);
 
-    if(showDisplay) {
+    if(tft != nullptr) {
         EVAL_START();
-        drawMoon(phase, rot, mask);
+        drawMoon(tft, phase, rot, mask);
         EVAL_END("drawMoon");
     }
 
@@ -143,78 +148,78 @@ void berechneSonnenaufgang() {
 
 // ── Mondauf- / -untergang ────────────────────────────────────────────────────
 
-void berechneMondaufgang() {
-    struct tm zeitInfo;
-    if (!getLocalTime(&zeitInfo)) {
-        Serial.println("Keine gültige NTP-Zeit für Mondberechnung.");
-        return;
-    }
-    double jd0 = astro::calculateJulianDate(
-        zeitInfo.tm_year + 1900,
-        zeitInfo.tm_mon  + 1,
-        zeitInfo.tm_mday);
-    jd0 = round(jd0) - 0.5;  // Mitternacht UTC
+// void berechneMondaufgang() {
+//     struct tm zeitInfo;
+//     if (!getLocalTime(&zeitInfo)) {
+//         Serial.println("Keine gültige NTP-Zeit für Mondberechnung.");
+//         return;
+//     }
+//     double jd0 = astro::calculateJulianDate(
+//         zeitInfo.tm_year + 1900,
+//         zeitInfo.tm_mon  + 1,
+//         zeitInfo.tm_mday);
+//     jd0 = round(jd0) - 0.5;  // Mitternacht UTC
 
-    // Mondpositionen für jd0-1, jd0, jd0+1
-    astro::MoonPosition mp1 = astro::calculateMoon(jd0 - 1);
-    astro::MoonPosition mp2 = astro::calculateMoon(jd0);
-    astro::MoonPosition mp3 = astro::calculateMoon(jd0 + 1);
-    astro::RaDek r1 = astro::calculateRaDek(mp1.longitude, mp1.latitude);
-    astro::RaDek r2 = astro::calculateRaDek(mp2.longitude, mp2.latitude);
-    astro::RaDek r3 = astro::calculateRaDek(mp3.longitude, mp3.latitude);
+//     // Mondpositionen für jd0-1, jd0, jd0+1
+//     astro::MoonPosition mp1 = astro::calculateMoon(jd0 - 1);
+//     astro::MoonPosition mp2 = astro::calculateMoon(jd0);
+//     astro::MoonPosition mp3 = astro::calculateMoon(jd0 + 1);
+//     astro::RaDek r1 = astro::calculateRaDek(mp1.longitude, mp1.latitude);
+//     astro::RaDek r2 = astro::calculateRaDek(mp2.longitude, mp2.latitude);
+//     astro::RaDek r3 = astro::calculateRaDek(mp3.longitude, mp3.latitude);
 
-    // RA in Grad, Sprünge um ±360° bei 0h/24h korrigieren
-    double a1 = r1.ra * astro::RAD2DEG;
-    double a2 = r2.ra * astro::RAD2DEG;
-    double a3 = r3.ra * astro::RAD2DEG;
-    if      (a2 - a1 >  180.0) a1 += 360.0;
-    else if (a2 - a1 < -180.0) a1 -= 360.0;
-    if      (a3 - a2 >  180.0) a3 -= 360.0;
-    else if (a3 - a2 < -180.0) a3 += 360.0;
+//     // RA in Grad, Sprünge um ±360° bei 0h/24h korrigieren
+//     double a1 = r1.ra * astro::RAD2DEG;
+//     double a2 = r2.ra * astro::RAD2DEG;
+//     double a3 = r3.ra * astro::RAD2DEG;
+//     if      (a2 - a1 >  180.0) a1 += 360.0;
+//     else if (a2 - a1 < -180.0) a1 -= 360.0;
+//     if      (a3 - a2 >  180.0) a3 -= 360.0;
+//     else if (a3 - a2 < -180.0) a3 += 360.0;
 
-    double d1 = r1.dek * astro::RAD2DEG;
-    double d2 = r2.dek * astro::RAD2DEG;
-    double d3 = r3.dek * astro::RAD2DEG;
+//     double d1 = r1.dek * astro::RAD2DEG;
+//     double d2 = r2.dek * astro::RAD2DEG;
+//     double d3 = r3.dek * astro::RAD2DEG;
 
-    // Horizontalparallaxe → Standard-Aufgangshöhe (Meeus Kap. 15)
-    double parallax = asin(astro::EARTH_RADIUS / mp2.distance) * astro::RAD2DEG;
-    double h0 = 0.7275 * parallax - 0.5667;
+//     // Horizontalparallaxe → Standard-Aufgangshöhe (Meeus Kap. 15)
+//     double parallax = asin(astro::EARTH_RADIUS / mp2.distance) * astro::RAD2DEG;
+//     double h0 = 0.7275 * parallax - 0.5667;
 
-    // Greenwicher Sternzeit bei Mitternacht (Grad)
-    double theta0 = astro::calculateSiderealTime(jd0) * 180.0 / 12.0;
+//     // Greenwicher Sternzeit bei Mitternacht (Grad)
+//     double theta0 = astro::calculateSiderealTime(jd0) * 180.0 / 12.0;
 
-    // Anfangsschätzung über Stundenwinkel bei jd0
-    double cH0 = (sin(h0 * astro::DEG2RAD) - sin(LATITUDE * astro::DEG2RAD) * sin(r2.dek))
-               / (cos(LATITUDE * astro::DEG2RAD) * cos(r2.dek));
-    if (cH0 < -1.0 || cH0 > 1.0) {
-        Serial.println("  Mondauf/-untergang: Mond geht heute nicht auf oder nicht unter.");
-        return;
-    }
-    double H0 = acos(cH0) * astro::RAD2DEG;
+//     // Anfangsschätzung über Stundenwinkel bei jd0
+//     double cH0 = (sin(h0 * astro::DEG2RAD) - sin(LATITUDE * astro::DEG2RAD) * sin(r2.dek))
+//                / (cos(LATITUDE * astro::DEG2RAD) * cos(r2.dek));
+//     if (cH0 < -1.0 || cH0 > 1.0) {
+//         Serial.println("  Mondauf/-untergang: Mond geht heute nicht auf oder nicht unter.");
+//         return;
+//     }
+//     double H0 = acos(cH0) * astro::RAD2DEG;
 
-    // Startwerte m ∈ [0,1] = Bruchteil des Tages
-    double m0 = fmod((a2 - LONGITUDE - theta0) / 360.0 + 1.0, 1.0);
-    double m1 = fmod(m0 - H0 / 360.0 + 1.0, 1.0);
-    double m2 = fmod(m0 + H0 / 360.0 + 1.0, 1.0);
+//     // Startwerte m ∈ [0,1] = Bruchteil des Tages
+//     double m0 = fmod((a2 - LONGITUDE - theta0) / 360.0 + 1.0, 1.0);
+//     double m1 = fmod(m0 - H0 / 360.0 + 1.0, 1.0);
+//     double m2 = fmod(m0 + H0 / 360.0 + 1.0, 1.0);
 
-    double jd_set = jd0+fmod(m2 + 1, 1.0);
-    double gmstStunden  = astro::calculateSiderealTime(jd_set);
-    double siderealTime = gmstStunden * M_PI / 12.0 + LONGITUDE * astro::DEG2RAD;
+//     double jd_set = jd0+fmod(m2 + 1, 1.0);
+//     double gmstStunden  = astro::calculateSiderealTime(jd_set);
+//     double siderealTime = gmstStunden * M_PI / 12.0 + LONGITUDE * astro::DEG2RAD;
 
-    astro::MoonPosition moon1 = astro::calculateMoon(jd_set);
-    astro::RaDek r_set = astro::calculateRaDek(moon1.longitude, moon1.latitude);
-    astro::AzimutHeight moonAzimutHeight1 = astro::calculateHAzFromRaDek(r_set, siderealTime, LATITUDE  * astro::DEG2RAD);
+//     astro::MoonPosition moon1 = astro::calculateMoon(jd_set);
+//     astro::RaDek r_set = astro::calculateRaDek(moon1.longitude, moon1.latitude);
+//     astro::AzimutHeight moonAzimutHeight1 = astro::calculateHAzFromRaDek(r_set, siderealTime, LATITUDE  * astro::DEG2RAD);
 
-    printHHMM("Mondaufgang:    ", fmod(m1 + 1.0, 1.0) * 24.0);
-    printHHMM("Mondkulmination:", fmod(m0 + 1.0, 1.0) * 24.0);
-    printHHMM("Monduntergang:  ", fmod(m2 + 1.0, 1.0) * 24.0);
+//     printHHMM("Mondaufgang:    ", fmod(m1 + 1.0, 1.0) * 24.0);
+//     printHHMM("Mondkulmination:", fmod(m0 + 1.0, 1.0) * 24.0);
+//     printHHMM("Monduntergang:  ", fmod(m2 + 1.0, 1.0) * 24.0);
 
-    Serial.printf("  Monduntergang Azimut/Höhe: %f° / %f°\n", moonAzimutHeight1.azimut * astro::RAD2DEG, moonAzimutHeight1.height * astro::RAD2DEG);
-}
+//     Serial.printf("  Monduntergang Azimut/Höhe: %f° / %f°\n", moonAzimutHeight1.azimut * astro::RAD2DEG, moonAzimutHeight1.height * astro::RAD2DEG);
+// }
 
 // ── Display ──────────────────────────────────────────────────────────────────
 
-void drawMoon(float phase, float rotation, float mask) {
+void drawMoon(Adafruit_GC9A01A* tft, float phase, float rotation, float mask) {
 
   // Bildet den Mond auf einem 240x240 Pixel großen Kreis ab.
   // Es wird eine Textur (FullMoon) verwendet, die bei Vollmond vollständig sichtbar ist.
@@ -291,9 +296,8 @@ void drawMoon(float phase, float rotation, float mask) {
                    | ((uint16_t)(fg * 63.0f + 0.01f) <<  5)
                    |  (uint16_t)(fb * 31.0f + 0.01f);
       }
-      tft.drawPixel(x + r, y + r, pixelColor);
+      tft->drawPixel(x + r, y + r, pixelColor);
     }
     yield();
   }
-
 }
