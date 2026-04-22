@@ -35,7 +35,7 @@ static double julianDateVonTm(const struct tm& t) {
     );
 }
 
-void calculateMoon(struct tm time, bool printInfo, Adafruit_GC9A01A* tft = nullptr) {
+void calculateMoon(const struct tm& time, bool printInfo, Adafruit_GC9A01A* tft = nullptr) {
 
     EVAL_START();
     double jd = julianDateVonTm(time);
@@ -89,8 +89,7 @@ void calculateMoon(struct tm time, bool printInfo, Adafruit_GC9A01A* tft = nullp
     // Zenitwinkel des hellen Mondrandes: chi - q
     double mask = (chi-q+M_PI/2);
 
-    double rot = (mondAchse.axle-q-0.389615);
-
+    double rot = (mondAchse.axle-q-0.455356); // 0.455356 = 26.1° Korrektur der Textur
     if(tft != nullptr) {
         EVAL_START();
         drawMoon(tft, phase, rot, mask);
