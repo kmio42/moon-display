@@ -28,10 +28,6 @@
 
 WiFiMulti wifiMulti;
 
-// Standort (Dezimalgrad)
-constexpr double LATITUDE  =  49.821;
-constexpr double LONGITUDE =   8.869;
-
 // NTP
 constexpr long   GMT_OFFSET_SEC  = 0;    // UTC verwenden; Zeitzone lokal egal
 constexpr int    DAYLIGHT_OFFSET = 0;

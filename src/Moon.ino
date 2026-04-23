@@ -3,6 +3,9 @@
 
 #include "astro.h"
 
+// Standort (Dezimalgrad)
+constexpr double LATITUDE  =  49.821;
+constexpr double LONGITUDE =   8.869;
 
 extern const uint16_t FullMoon[];
 
@@ -52,7 +55,7 @@ void calculateMoon(const struct tm& time, bool printInfo, Adafruit_GC9A01A* tft 
     double eklLaenge    = astro::calculateEclipticalLength(jd);
 
     astro::RaDek sunRaDek = astro::calculateRaDek(eklLaenge, 0.0);
-    sunRaDek.distance = 149597870;  // in km (1 AE)
+    double sun_distance = 149597870;  // in km (1 AE)
     EVAL_END("Sonnenposition");
 
     // ── Mondposition ─────────────────────────────────────────────────────────
@@ -60,8 +63,9 @@ void calculateMoon(const struct tm& time, bool printInfo, Adafruit_GC9A01A* tft 
     astro::MoonPosition moon = astro::calculateMoon(jd);
 
     astro::RaDek moonRaDek = astro::calculateRaDek(moon.longitude, moon.latitude);
+    double moonParallax = asin(6378.14/moon.distance);
 
-    moonRaDek.distance = moon.distance;  // in km
+    moonRaDek = astro::calculateParallax(moonRaDek, moonParallax, siderealTime, LATITUDE * astro::DEG2RAD);
     EVAL_END("Mondposition RA/Dek");
 
     // ── Mondachse & Libration ────────────────────────────────────────────────
@@ -72,7 +76,7 @@ void calculateMoon(const struct tm& time, bool printInfo, Adafruit_GC9A01A* tft 
     // ── Mondphase und parallaktischer Winkel ──────────────────────────────────
     EVAL_START();
 
-    double phase = calculateMoonPhase(sunRaDek, sunRaDek.distance, moonRaDek, moonRaDek.distance);
+    double phase = calculateMoonPhase(sunRaDek, sun_distance, moonRaDek, moon.distance);
 
     // Positionswinkel (Mitte) des beleuchteten Mondrandes
     // Formel 46.5 aus "Astronomische Algorithmen, 2. Auflage" von Jean Meeus.
@@ -87,9 +91,9 @@ void calculateMoon(const struct tm& time, bool printInfo, Adafruit_GC9A01A* tft 
     EVAL_END("Mondphase & Parallaktischer Winkel");
 
     // Zenitwinkel des hellen Mondrandes: chi - q
-    double mask = (chi-q+M_PI/2);
+    double mask = (chi - q + M_PI/2);
 
-    double rot = (mondAchse.axle-q-0.455356); // 0.455356 = 26.1° Korrektur der Textur
+    double rot = (mondAchse.axle-q + 0.004919 - 0.116413461); //ermittelte Korrektur mit Stellarium
     if(tft != nullptr) {
         EVAL_START();
         drawMoon(tft, phase, rot, mask);
@@ -109,8 +113,10 @@ void calculateMoon(const struct tm& time, bool printInfo, Adafruit_GC9A01A* tft 
         Serial.printf("  Mondphase (0-1):          %6.4f\n", phase);
         Serial.printf("  Mondrand:                 %6.2f°\n", (chi) * astro::RAD2DEG);
         Serial.printf("  Parallaktischer Winkel:   %6.2f°\n", q * astro::RAD2DEG);
+        Serial.printf("  Sternzeit:                %6.2f°\n", gmstStunden);
+        Serial.printf(" rot:                      %f\n", rot);
+        Serial.printf(" mask:                     %f\n", mask);
     }
-
 }
 
 // ── Sonnenauf- / -untergang ──────────────────────────────────────────────────
@@ -295,6 +301,7 @@ void drawMoon(Adafruit_GC9A01A* tft, float phase, float rotation, float mask) {
                    | ((uint16_t)(fg * 63.0f + 0.01f) <<  5)
                    |  (uint16_t)(fb * 31.0f + 0.01f);
       }
+
       tft->drawPixel(x + r, y + r, pixelColor);
     }
     yield();

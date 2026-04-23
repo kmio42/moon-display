@@ -23,7 +23,6 @@ constexpr double RAD2DEG = 180.0 / M_PI;
 struct RaDek {
     double ra;
     double dek;
-    double distance; // optional, für drawMoonPhase
 };
 
 struct AzimutHeight {
