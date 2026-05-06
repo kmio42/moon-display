@@ -8,7 +8,19 @@ constexpr double LATITUDE  =  49.821;
 constexpr double LONGITUDE =   8.869;
 
 extern const uint16_t FullMoon[];
+extern const uint16_t lroc[];
 
+// Darstellungsoptionen (bitweise kombinierbar)
+constexpr int OPTION_NONE = 0;
+constexpr int OPTION_DARKEN_UNLIT = 1; // Unbeleuchteten Bereich zusätzlich abdunkeln (schwacher Schein um den Mond)
+constexpr int OPTION_BLUISH_TINT = 2; // Bläuliche Tönung - wenn unter Horizont
+constexpr int OPTION_USE_NASA_MODEL = 4; // Textur aus lroc[] verwenden (statt Vollmond-Textur)
+constexpr int OPTION_USE_LIBRATION = 8; // Librationen berücksichtigen
+
+// Expliziter Prototyp, da der automatische .ino-Prototyp bei Referenztypen fehlschlagen kann.
+void drawMoon(Adafruit_GC9A01A* tft, float phase, float rotation, float mask, int options, const astro::Mat3 &rotMatrix);
+
+// ── Timing-Makros für die Performance-Analyse ─────────────────────────────────────────
 #if 0
 unsigned long tStart, tEnd, tTotal;
 #define EVAL_START() tStart = micros();
@@ -94,15 +106,27 @@ void calculateMoon(const struct tm& time, bool printInfo, Adafruit_GC9A01A* tft 
     double mask = (chi - q + M_PI/2);
 
     double rot = (mondAchse.axle-q + 0.004919 - 0.116413461); //ermittelte Korrektur mit Stellarium
+
+    astro::AzimutHeight moonAzimutHeight = astro::calculateHAzFromRaDek(moonRaDek, siderealTime, LATITUDE  * astro::DEG2RAD);
+
+    const astro::Mat3 axleRot = astro::createRotationMatrix({0, 0, 1}, -mondAchse.axle + q); // -0.389615 ermittelte Korrektur mit Stellarium
+    const astro::Mat3 libLatitudeRot = astro::createRotationMatrix({1, 0, 0}, -mondAchse.libration.latitude);
+    const astro::Mat3 libLongitudeRot = astro::createRotationMatrix({0, -1, 0}, -mondAchse.libration.longitude);
+    astro::Mat3 rotMatrix = astro::multiplyMatrix(libLongitudeRot, libLatitudeRot);
+                rotMatrix = astro::multiplyMatrix(rotMatrix, axleRot);
+
     if(tft != nullptr) {
         EVAL_START();
-        drawMoon(tft, phase, rot, mask);
+        int options = OPTION_DARKEN_UNLIT;
+        if (moonAzimutHeight.height < 0) {
+            options |= OPTION_BLUISH_TINT;
+        }
+        drawMoon(tft, phase, rot, mask, options, rotMatrix);
         EVAL_END("drawMoon");
     }
 
     EVAL_PRINT_TOTAL();
 
-    astro::AzimutHeight moonAzimutHeight = astro::calculateHAzFromRaDek(moonRaDek, siderealTime, LATITUDE  * astro::DEG2RAD);
 
     if (printInfo) {
         Serial.printf("  Julianisches Datum:       %f\n", jd);
@@ -224,7 +248,7 @@ void berechneSonnenaufgang() {
 
 // ── Display ──────────────────────────────────────────────────────────────────
 
-void drawMoon(Adafruit_GC9A01A* tft, float phase, float rotation, float mask) {
+void drawMoon(Adafruit_GC9A01A* tft, float phase, float rotation, float mask, int options, const astro::Mat3 &rotMatrix) {
 
   // Bildet den Mond auf einem 240x240 Pixel großen Kreis ab.
   // Es wird eine Textur (FullMoon) verwendet, die bei Vollmond vollständig sichtbar ist.
@@ -285,24 +309,60 @@ void drawMoon(Adafruit_GC9A01A* tft, float phase, float rotation, float mask) {
       }
 
       uint16_t pixelColor = 0;
-      int pixelX = (x * cosRot + y * sinRot) + r;
-      int pixelY = (-x * sinRot + y * cosRot) + r;
-      memcpy_P(&pixelColor, &FullMoon[(pixelY*240 + pixelX)], 2);
 
-      if(!pixelActive) {
+
+      if(pixelActive || (options & OPTION_DARKEN_UNLIT)) {
+
+        if(options & OPTION_USE_NASA_MODEL) {
+          // Berechnung der Texturkoordinaten über sphärische Projektion auf die Mondkugel
+          double z = sqrt(r*r - x*x - y*y);
+          astro::Vec3 point = astro::applyMatrix({(double) x,-(double) y,z},rotMatrix);
+          //Normalisieren
+          double len = sqrt(point.x * point.x + point.y * point.y + point.z * point.z);
+          point.x /= len;
+          point.y /= len;
+          point.z /= len;
+          double lon_moon = atan2(point.x, point.z);
+          double lat_moon = asin(std::max(-1.0, std::min(1.0, point.y)));
+          int u = (int) ((lon_moon + M_PI) / (2 * M_PI) * 480);
+          int v = (int) ((M_PI/2 - lat_moon) / M_PI * 240);
+          memcpy_P(&pixelColor, &lroc[(v*480 + u)], 2);
+        } else {
+          // Berechnung der Texturkoordinaten
+          int pixelX = (x * cosRot + y * sinRot) + r;
+          int pixelY = (-x * sinRot + y * cosRot) + r;
+          memcpy_P(&pixelColor, &FullMoon[(pixelY*240 + pixelX)], 2);
+        }
         // Normalisieren auf 0..1
         float fr = ((pixelColor >> 11) & 0x1F) / 31.0f;
         float fg = ((pixelColor >>  5) & 0x3F) / 63.0f;
         float fb = ( pixelColor        & 0x1F) / 31.0f;
-        //abgedunkeltes Graustufenbild für den unbeleuchteten Bereich
-        fr = fg = fb = (fr + fg + fb) / 3.0f*0.15f;
+
+        if(!pixelActive && (options & OPTION_DARKEN_UNLIT)) {
+          // Unbeleuchteten Bereich zusätzlich abdunkeln (schwacher Schein um den Mond)
+          //fr *= 0.15f;
+          //fg *= 0.15f;
+          //fb *= 0.15f; 
+          fr = fg = fb = (fr + fg + fb) / 3.0f*0.15f;
+        }
+
+        if(options & OPTION_BLUISH_TINT) {
+          // Bläuliche Tönung, wenn unter Horizont
+          fr *= 0.7f;
+          fg *= 0.7f;
+          fb = fb * 0.8f + 0.14; // Blau leicht aufhellen
+          fr = min(fr, 1.0f);
+          fg = min(fg, 1.0f);
+          fb = min(fb, 1.0f);
+        }
 
         pixelColor = ((uint16_t)(fr * 31.0f + 0.01f) << 11)
                    | ((uint16_t)(fg * 63.0f + 0.01f) <<  5)
                    |  (uint16_t)(fb * 31.0f + 0.01f);
       }
-
+      
       tft->drawPixel(x + r, y + r, pixelColor);
+
     }
     yield();
   }
