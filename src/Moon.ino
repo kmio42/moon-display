@@ -109,11 +109,12 @@ void calculateMoon(const struct tm& time, bool printInfo, Adafruit_GC9A01A* tft 
 
     astro::AzimutHeight moonAzimutHeight = astro::calculateHAzFromRaDek(moonRaDek, siderealTime, LATITUDE  * astro::DEG2RAD);
 
-    const astro::Mat3 axleRot = astro::createRotationMatrix({0, 0, 1}, -mondAchse.axle + q); // -0.389615 ermittelte Korrektur mit Stellarium
-    const astro::Mat3 libLatitudeRot = astro::createRotationMatrix({1, 0, 0}, -mondAchse.libration.latitude);
     const astro::Mat3 libLongitudeRot = astro::createRotationMatrix({0, -1, 0}, -mondAchse.libration.longitude);
-    astro::Mat3 rotMatrix = astro::multiplyMatrix(libLongitudeRot, libLatitudeRot);
-                rotMatrix = astro::multiplyMatrix(rotMatrix, axleRot);
+    const astro::Mat3 libLatitudeRot = astro::createRotationMatrix({1, 0, 0}, -mondAchse.libration.latitude);
+    const astro::Mat3 axleRot = astro::createRotationMatrix({0, 0, 1}, -mondAchse.axle + q);
+
+    astro::Mat3 rotMatrix = multiplyMatrix(libLongitudeRot, libLatitudeRot);
+                rotMatrix = multiplyMatrix(rotMatrix, axleRot);
 
     if(tft != nullptr) {
         EVAL_START();
@@ -284,6 +285,21 @@ void drawMoon(Adafruit_GC9A01A* tft, float phase, float rotation, float mask, in
   float cosRot = cos(-rotation);
   float sinRot = sin(-rotation);
 
+  astro::Mat3 rotMat = rotMatrix;
+
+  if((options & OPTION_USE_LIBRATION) && !(options & OPTION_USE_NASA_MODEL)) {
+    const astro::Mat3 libLongitudeRotCorr = astro::createRotationMatrix({0,-1,0},-2.24*astro::DEG2RAD);
+    const astro::Mat3 libLatitudeRotCorr = astro::createRotationMatrix({1,0,0},5.78*astro::DEG2RAD);
+    const astro::Mat3 axleRotCorr = astro::createRotationMatrix({0,0,1},9*astro::DEG2RAD);
+
+    astro::Mat3 rotMat_temp = multiplyMatrix(axleRotCorr,libLatitudeRotCorr);
+                rotMat_temp = multiplyMatrix(rotMat_temp,libLongitudeRotCorr);
+                rotMat = multiplyMatrix(rotMat_temp, rotMatrix);
+    for(int i = 0; i < 3; ++i)
+      for(int j = 0; j < 3; ++j)
+        Serial.printf("rotMat.m[%d][%d] = %f\n", i, j, rotMat.m[i][j]);
+  }
+
   for (int y = -r; y < r; y++) {
     for (int x = -r; x < r; x++) {
       int circle = x * x + y * y - r * r;
@@ -312,11 +328,14 @@ void drawMoon(Adafruit_GC9A01A* tft, float phase, float rotation, float mask, in
 
 
       if(pixelActive || (options & OPTION_DARKEN_UNLIT)) {
-
+        //#af a8 9c
+        pixelColor = ((uint16_t)(175/255.0f * 31.0f + 0.01f) << 11)
+                   | ((uint16_t)(168/255.0f * 63.0f + 0.01f) <<  5)
+                   |  (uint16_t)(156/255.0f * 31.0f + 0.01f);
         if(options & OPTION_USE_NASA_MODEL) {
           // Berechnung der Texturkoordinaten über sphärische Projektion auf die Mondkugel
           double z = sqrt(r*r - x*x - y*y);
-          astro::Vec3 point = astro::applyMatrix({(double) x,-(double) y,z},rotMatrix);
+          astro::Vec3 point = astro::applyMatrix({(double) x,-(double) y,z},rotMat);
           //Normalisieren
           double len = sqrt(point.x * point.x + point.y * point.y + point.z * point.z);
           point.x /= len;
@@ -329,9 +348,22 @@ void drawMoon(Adafruit_GC9A01A* tft, float phase, float rotation, float mask, in
           memcpy_P(&pixelColor, &lroc[(v*480 + u)], 2);
         } else {
           // Berechnung der Texturkoordinaten
-          int pixelX = (x * cosRot + y * sinRot) + r;
-          int pixelY = (-x * sinRot + y * cosRot) + r;
-          memcpy_P(&pixelColor, &FullMoon[(pixelY*240 + pixelX)], 2);
+          int pixelX = 0;
+          int pixelY = 0;
+          if(options & OPTION_USE_LIBRATION) {
+            // Berücksichtigung der Librationen über die Rotationsmatrix
+            double z = sqrt(r*r - x*x - y*y);
+            astro::Vec3 point = astro::applyMatrix({(double) x,-(double) y,z},rotMat);
+            pixelX = point.x+r;
+            pixelY = -point.y+r;
+            if(point.z > 0) {
+              memcpy_P(&pixelColor, &FullMoon[(pixelY*240 + pixelX)], 2);
+            }
+          } else {
+            pixelX = (x * cosRot + y * sinRot) + r;
+            pixelY = (-x * sinRot + y * cosRot) + r;
+            memcpy_P(&pixelColor, &FullMoon[(pixelY*240 + pixelX)], 2);
+          }
         }
         // Normalisieren auf 0..1
         float fr = ((pixelColor >> 11) & 0x1F) / 31.0f;
