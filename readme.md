@@ -2,7 +2,7 @@
 Zeigt den Mond in aktueller Mondphase und Drehung für einen bestimmten Betrachtungsort auf einem runden IPS-Display. Die Zeitsynchronisation findet über WLAN (mit NTP) statt, die Berechnung erfolgt lokal.
 Das dargestellte Mondbild entstammt einer eigenen Fotografie. Libration wird nicht berücksichtigt.
 
-[Mond-Display Gadget](device.jpg)
+![Mond-Display Gadget](device.jpg)
 
 ## Features
 * Zeitsynchronisation über NTP
