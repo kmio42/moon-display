@@ -1,8 +1,8 @@
-# Mond Display
+# Moon Display
 The Moon Display is a compact desk device built around an ESP32-C3 and a round IPS display that shows the current view of the Moon in real time: not just the phase, but the actual appearance as seen from the observer's location at this very moment. Various display options are available, including texture choice, dimming of the unilluminated side, and whether libration is taken into account.
 An internet connection is only needed as a time source — all astronomical calculations are performed on the device itself.
 
-![Mond-Display Gadget](device.jpg)
+![Moon Display](device.jpg)
 
 ## Features
 * Real-time moon rendering showing the current appearance as seen from the observer's location
