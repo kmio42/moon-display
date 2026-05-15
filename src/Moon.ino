@@ -177,77 +177,6 @@ void berechneSonnenaufgang() {
     printHHMM("Sonnenuntergang:", s.setting + 2);
 }
 
-// ── Mondauf- / -untergang ────────────────────────────────────────────────────
-
-// void berechneMondaufgang() {
-//     struct tm zeitInfo;
-//     if (!getLocalTime(&zeitInfo)) {
-//         Serial.println("Keine gültige NTP-Zeit für Mondberechnung.");
-//         return;
-//     }
-//     double jd0 = astro::calculateJulianDate(
-//         zeitInfo.tm_year + 1900,
-//         zeitInfo.tm_mon  + 1,
-//         zeitInfo.tm_mday);
-//     jd0 = round(jd0) - 0.5;  // Mitternacht UTC
-
-//     // Mondpositionen für jd0-1, jd0, jd0+1
-//     astro::MoonPosition mp1 = astro::calculateMoon(jd0 - 1);
-//     astro::MoonPosition mp2 = astro::calculateMoon(jd0);
-//     astro::MoonPosition mp3 = astro::calculateMoon(jd0 + 1);
-//     astro::RaDek r1 = astro::calculateRaDek(mp1.longitude, mp1.latitude);
-//     astro::RaDek r2 = astro::calculateRaDek(mp2.longitude, mp2.latitude);
-//     astro::RaDek r3 = astro::calculateRaDek(mp3.longitude, mp3.latitude);
-
-//     // RA in Grad, Sprünge um ±360° bei 0h/24h korrigieren
-//     double a1 = r1.ra * astro::RAD2DEG;
-//     double a2 = r2.ra * astro::RAD2DEG;
-//     double a3 = r3.ra * astro::RAD2DEG;
-//     if      (a2 - a1 >  180.0) a1 += 360.0;
-//     else if (a2 - a1 < -180.0) a1 -= 360.0;
-//     if      (a3 - a2 >  180.0) a3 -= 360.0;
-//     else if (a3 - a2 < -180.0) a3 += 360.0;
-
-//     double d1 = r1.dek * astro::RAD2DEG;
-//     double d2 = r2.dek * astro::RAD2DEG;
-//     double d3 = r3.dek * astro::RAD2DEG;
-
-//     // Horizontalparallaxe → Standard-Aufgangshöhe (Meeus Kap. 15)
-//     double parallax = asin(astro::EARTH_RADIUS / mp2.distance) * astro::RAD2DEG;
-//     double h0 = 0.7275 * parallax - 0.5667;
-
-//     // Greenwicher Sternzeit bei Mitternacht (Grad)
-//     double theta0 = astro::calculateSiderealTime(jd0) * 180.0 / 12.0;
-
-//     // Anfangsschätzung über Stundenwinkel bei jd0
-//     double cH0 = (sin(h0 * astro::DEG2RAD) - sin(configLatitude * astro::DEG2RAD) * sin(r2.dek))
-//                / (cos(configLatitude * astro::DEG2RAD) * cos(r2.dek));
-//     if (cH0 < -1.0 || cH0 > 1.0) {
-//         Serial.println("  Mondauf/-untergang: Mond geht heute nicht auf oder nicht unter.");
-//         return;
-//     }
-//     double H0 = acos(cH0) * astro::RAD2DEG;
-
-//     // Startwerte m ∈ [0,1] = Bruchteil des Tages
-//     double m0 = fmod((a2 - configLongitude - theta0) / 360.0 + 1.0, 1.0);
-//     double m1 = fmod(m0 - H0 / 360.0 + 1.0, 1.0);
-//     double m2 = fmod(m0 + H0 / 360.0 + 1.0, 1.0);
-
-//     double jd_set = jd0+fmod(m2 + 1, 1.0);
-//     double gmstStunden  = astro::calculateSiderealTime(jd_set);
-//     double siderealTime = gmstStunden * M_PI / 12.0 + configLongitude * astro::DEG2RAD;
-
-//     astro::MoonPosition moon1 = astro::calculateMoon(jd_set);
-//     astro::RaDek r_set = astro::calculateRaDek(moon1.longitude, moon1.latitude);
-//     astro::AzimutHeight moonAzimutHeight1 = astro::calculateHAzFromRaDek(r_set, siderealTime, configLatitude  * astro::DEG2RAD);
-
-//     printHHMM("Mondaufgang:    ", fmod(m1 + 1.0, 1.0) * 24.0);
-//     printHHMM("Mondkulmination:", fmod(m0 + 1.0, 1.0) * 24.0);
-//     printHHMM("Monduntergang:  ", fmod(m2 + 1.0, 1.0) * 24.0);
-
-//     Serial.printf("  Monduntergang Azimut/Höhe: %f° / %f°\n", moonAzimutHeight1.azimut * astro::RAD2DEG, moonAzimutHeight1.height * astro::RAD2DEG);
-// }
-
 // ── Display ──────────────────────────────────────────────────────────────────
 
 void drawMoon(Adafruit_GC9A01A* tft, float phase, float rotation, float mask, int options, const astro::Mat3 &rotMatrix) {
@@ -329,15 +258,14 @@ void drawMoon(Adafruit_GC9A01A* tft, float phase, float rotation, float mask, in
 
 
       if(pixelActive || (options & OPTION_DARKEN_UNLIT)) {
-        //#af a8 9c
+        //Default-color of moon surface, if pixel is outside of texture or if no texture is used.
         pixelColor = ((uint16_t)(175/255.0f * 31.0f + 0.01f) << 11)
                    | ((uint16_t)(168/255.0f * 63.0f + 0.01f) <<  5)
                    |  (uint16_t)(156/255.0f * 31.0f + 0.01f);
+
         if(options & OPTION_USE_NASA_MODEL) {
-          // Berechnung der Texturkoordinaten über sphärische Projektion auf die Mondkugel
           double z = sqrt(r*r - x*x - y*y);
           astro::Vec3 point = astro::applyMatrix({(double) x,-(double) y,z},rotMat);
-          //Normalisieren
           double len = sqrt(point.x * point.x + point.y * point.y + point.z * point.z);
           point.x /= len;
           point.y /= len;
@@ -348,11 +276,9 @@ void drawMoon(Adafruit_GC9A01A* tft, float phase, float rotation, float mask, in
           int v = (int) ((M_PI/2 - lat_moon) / M_PI * 240);
           memcpy_P(&pixelColor, &lroc[(v*480 + u)], 2);
         } else {
-          // Berechnung der Texturkoordinaten
           int pixelX = 0;
           int pixelY = 0;
           if(options & OPTION_USE_LIBRATION) {
-            // Berücksichtigung der Librationen über die Rotationsmatrix
             double z = sqrt(r*r - x*x - y*y);
             astro::Vec3 point = astro::applyMatrix({(double) x,-(double) y,z},rotMat);
             pixelX = point.x+r;
@@ -372,11 +298,10 @@ void drawMoon(Adafruit_GC9A01A* tft, float phase, float rotation, float mask, in
         float fb = ( pixelColor        & 0x1F) / 31.0f;
 
         if(!pixelActive && (options & OPTION_DARKEN_UNLIT)) {
-          // Unbeleuchteten Bereich zusätzlich abdunkeln (schwacher Schein um den Mond)
+          // Unbeleuchteten Bereich zusätzlich abdunkeln
           fr *= 0.5f;
           fg *= 0.5f;
           fb *= 0.5f; 
-          //fr = fg = fb = (fr + fg + fb) / 3.0f*0.15f;
         }
 
         if(options & OPTION_BLUISH_TINT) {

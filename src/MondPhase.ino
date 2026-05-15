@@ -6,11 +6,6 @@
  *
  * Vom Nutzer zu ergänzen:
  *   - WIFI_SSID_1..3 / WIFI_PASSWORD_1..3  (in credentials.h)
- *   - LATITUDE / LONGITUDE (Standort in Dezimalgrad)
- *   - outputBuffer  (MoonPhasePixel[480*480])
- *   - moonTexture   (const MoonPhasePixel* oder nullptr)
- *   - texSize       (Kantenlänge der Textur, oder 0)
- *   - Anzeige-Code nach drawMoonPhase()
  */
 
 #include <WiFi.h>
