@@ -36,6 +36,13 @@ constexpr char   NTP_SERVER[]    = "pool.ntp.org";
 // Mond-Rendering
 extern void calculateMoon(const struct tm& timeinfo, bool printInfo, Adafruit_GC9A01A* tft);
 
+// Persistente Konfiguration (definiert in Config.ino)
+extern double configLatitude;
+extern double configLongitude;
+extern int    configDisplayOptions;
+extern void   loadConfig();
+extern void   saveConfig();
+
 // Display
 #define TFT_CS 7
 #define TFT_DC 10
@@ -88,7 +95,7 @@ void cmd_moon(SerialCommands* sender)
 
     if (arg0 != nullptr) {
         char datetime[50];
-        // Versuche zuerst vollständiges Datum+Zeit: DD.MM.YYYY HH:MM
+        // Versuche zuerst vollständiges Datum+Zeit: DD.MM.YYYY HH:MM:SS
         const char* arg1 = sender->Next();
         if (arg1 != nullptr) {
             snprintf(datetime, sizeof(datetime), "%s %s", arg0, arg1);
@@ -96,7 +103,9 @@ void cmd_moon(SerialCommands* sender)
             snprintf(datetime, sizeof(datetime), "%s", arg0);
         }
         if (!parseDateTime(datetime, tm)) {
-            sender->GetSerial()->println("Ungültiges Format. Erwartet: HH:MM oder TT.MM.JJJJ HH:MM");
+            sender->GetSerial()->println("Ungültiges Format:");
+            sender->GetSerial()->println(datetime);
+            sender->GetSerial()->println("Erwartet: HH:MM:SS oder TT.MM.JJJJ HH:MM:SS");
             return;
         }
     } else {
@@ -125,7 +134,7 @@ void cmd_set_time_(SerialCommands* sender)
     const char* arg0 = sender->Next();
     const char* arg1 = sender->Next();
     if (arg0 == nullptr || (arg1 != nullptr && sender->Next() != nullptr)) {
-        sender->GetSerial()->println("Ungültiges Format. Erwartet: TT.MM.JJJJ HH:MM");
+        sender->GetSerial()->println("Ungültiges Format. Erwartet: TT.MM.JJJJ HH:MM:SS");
         return;
     }
     struct tm tm;
@@ -134,7 +143,7 @@ void cmd_set_time_(SerialCommands* sender)
         snprintf(datetime, sizeof(datetime), "%s %s", arg0, arg1);
     }
     if (!parseDateTime(datetime, tm)) {
-        sender->GetSerial()->println("Ungültiges Format. Erwartet: TT.MM.JJJJ HH:MM");
+        sender->GetSerial()->println("Ungültiges Format. Erwartet: TT.MM.JJJJ HH:MM:SS");
         return;
     }
     time_t t = mktime(&tm);
@@ -168,14 +177,73 @@ void cmd_wifi_(SerialCommands* sender)
 }
 SerialCommand cmd_wifi("wifi", cmd_wifi_);
 
+void cmd_set_location_(SerialCommands* sender)
+{
+    const char* arg0 = sender->Next();
+    const char* arg1 = sender->Next();
+    if (arg0 == nullptr || arg1 == nullptr) {
+        sender->GetSerial()->println("Ungültiges Format. Erwartet: set_location <lat> <lon>");
+        return;
+    }
+    char* endLat = nullptr;
+    char* endLon = nullptr;
+    double lat = strtod(arg0, &endLat);
+    double lon = strtod(arg1, &endLon);
+    if (endLat == arg0 || endLon == arg1 || lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) {
+        sender->GetSerial()->println("Ungültige Werte. Lat: -90..90, Lon: -180..180");
+        return;
+    }
+    configLatitude  = lat;
+    configLongitude = lon;
+    saveConfig();
+    sender->GetSerial()->printf("Standort gespeichert: %.6f / %.6f\n", configLatitude, configLongitude);
+}
+SerialCommand cmd_set_location("set_location", cmd_set_location_);
+
+void cmd_set_options_(SerialCommands* sender)
+{
+    const char* arg0 = sender->Next();
+    if (arg0 == nullptr) {
+        sender->GetSerial()->println("Ungültiges Format. Erwartet: set_options <wert>");
+        return;
+    }
+    char* end = nullptr;
+    long value = strtol(arg0, &end, 0); // 0 = autodetect dec/hex/oct
+    if (end == arg0 || value < 0 || value > 0x7FFFFFFF) {
+        sender->GetSerial()->println("Ungültiger Wert für Options.");
+        return;
+    }
+    configDisplayOptions = (int) value;
+    saveConfig();
+    sender->GetSerial()->printf("Display-Optionen gespeichert: %d\n", configDisplayOptions);
+}
+SerialCommand cmd_set_options("set_options", cmd_set_options_);
+
+void cmd_config_(SerialCommands* sender)
+{
+    sender->GetSerial()->println("Aktuelle Konfiguration:");
+    sender->GetSerial()->printf("  Latitude:  %.6f\n", configLatitude);
+    sender->GetSerial()->printf("  Longitude: %.6f\n", configLongitude);
+    sender->GetSerial()->printf("  Options:   %d (0x%X)\n", configDisplayOptions, configDisplayOptions);
+    sender->GetSerial()->printf("    [%c] darken_unlit    (1)\n",   (configDisplayOptions & 1) ? 'x' : ' ');
+    sender->GetSerial()->printf("    [%c] bluish_tint     (2)\n",   (configDisplayOptions & 2) ? 'x' : ' ');
+    sender->GetSerial()->printf("    [%c] use_nasa_model  (4)\n",   (configDisplayOptions & 4) ? 'x' : ' ');
+    sender->GetSerial()->printf("    [%c] use_libration   (8)\n",   (configDisplayOptions & 8) ? 'x' : ' ');
+}
+SerialCommand cmd_config("config", cmd_config_);
+
 void cmd_help(SerialCommands* sender)
 {
   sender->GetSerial()->println("Available commands:");
   sender->GetSerial()->println("  help - Show this help message");
-  sender->GetSerial()->println("  moon [HH:MM | DD.MM.YYYY HH:MM] - Display moon phase for given time (or current time if no argument)");
+  sender->GetSerial()->println("  moon [HH:MM:SS | DD.MM.YYYY HH:MM:SS] - Display moon phase for given time (or current time if no argument)");
   sender->GetSerial()->println("  moon_run - Start dynamic moon display (updates every minute)");
   sender->GetSerial()->println("  wifi [on|off] - Turn WiFi on or off");
-  sender->GetSerial()->println("  set_time TT.MM.JJJJ HH:MM - Set system time (UTC)");
+  sender->GetSerial()->println("  set_time TT.MM.JJJJ HH:MM:SS - Set system time (UTC)");
+  sender->GetSerial()->println("  set_location <lat> <lon> - Standort persistent speichern (Dezimalgrad)");
+  sender->GetSerial()->println("  set_options <wert> - Darstellungsoptionen persistent speichern (Bitfeld)");
+  sender->GetSerial()->println("    Bits: 1=darken_unlit, 2=bluish_tint, 4=use_nasa_model, 8=use_libration");
+  sender->GetSerial()->println("  config - Aktuelle Konfiguration anzeigen");
 }
 SerialCommand cmd_help_("help", cmd_help);
 
@@ -185,6 +253,9 @@ void setupSerialCommands() {
     serial_commands_.AddCommand(&cmd_moon_run);
     serial_commands_.AddCommand(&cmd_set_time);
     serial_commands_.AddCommand(&cmd_wifi);
+    serial_commands_.AddCommand(&cmd_set_location);
+    serial_commands_.AddCommand(&cmd_set_options);
+    serial_commands_.AddCommand(&cmd_config);
     serial_commands_.SetDefaultHandler(cmd_unrecognized);
 }
 
@@ -192,6 +263,8 @@ void setupSerialCommands() {
 
 void setup() {
     Serial.begin(115200);
+
+    loadConfig();
 
     WiFi.mode(WIFI_STA);
     // WLAN verbinden (alle konfigurierten Netzwerke)

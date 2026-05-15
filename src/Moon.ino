@@ -3,9 +3,10 @@
 
 #include "astro.h"
 
-// Standort (Dezimalgrad)
-constexpr double LATITUDE  =  49.821;
-constexpr double LONGITUDE =   8.869;
+// Standort (Dezimalgrad) und Darstellungsoptionen – persistent in Config.ino
+extern double configLatitude;
+extern double configLongitude;
+extern int    configDisplayOptions;
 
 extern const uint16_t FullMoon[];
 extern const uint16_t lroc[];
@@ -59,7 +60,7 @@ void calculateMoon(const struct tm& time, bool printInfo, Adafruit_GC9A01A* tft 
     // Lokale Sternzeit in Radiant (GMST + Längengrad-Offset)
     EVAL_START();
     double gmstStunden  = astro::calculateSiderealTime(jd);
-    double siderealTime = gmstStunden * M_PI / 12.0 + LONGITUDE * astro::DEG2RAD;
+    double siderealTime = gmstStunden * M_PI / 12.0 + configLongitude * astro::DEG2RAD;
     EVAL_END("Sternzeit");
 
     // ── Sonnenposition ───────────────────────────────────────────────────────
@@ -77,7 +78,7 @@ void calculateMoon(const struct tm& time, bool printInfo, Adafruit_GC9A01A* tft 
     astro::RaDek moonRaDek = astro::calculateRaDek(moon.longitude, moon.latitude);
     double moonParallax = asin(6378.14/moon.distance);
 
-    moonRaDek = astro::calculateParallax(moonRaDek, moonParallax, siderealTime, LATITUDE * astro::DEG2RAD);
+    moonRaDek = astro::calculateParallax(moonRaDek, moonParallax, siderealTime, configLatitude * astro::DEG2RAD);
     EVAL_END("Mondposition RA/Dek");
 
     // ── Mondachse & Libration ────────────────────────────────────────────────
@@ -99,7 +100,7 @@ void calculateMoon(const struct tm& time, bool printInfo, Adafruit_GC9A01A* tft 
 
     // ── Parallaktischer Winkel für Mond (Ortsabhängig) ─────────────────────────
     EVAL_START();
-    double q = calculateParallacticAngle(moonRaDek, siderealTime, LATITUDE * astro::DEG2RAD);
+    double q = calculateParallacticAngle(moonRaDek, siderealTime, configLatitude * astro::DEG2RAD);
     EVAL_END("Mondphase & Parallaktischer Winkel");
 
     // Zenitwinkel des hellen Mondrandes: chi - q
@@ -107,7 +108,7 @@ void calculateMoon(const struct tm& time, bool printInfo, Adafruit_GC9A01A* tft 
 
     double rot = (mondAchse.axle-q + 0.004919 - 0.116413461); //ermittelte Korrektur mit Stellarium
 
-    astro::AzimutHeight moonAzimutHeight = astro::calculateHAzFromRaDek(moonRaDek, siderealTime, LATITUDE  * astro::DEG2RAD);
+    astro::AzimutHeight moonAzimutHeight = astro::calculateHAzFromRaDek(moonRaDek, siderealTime, configLatitude  * astro::DEG2RAD);
 
     const astro::Mat3 libLongitudeRot = astro::createRotationMatrix({0, -1, 0}, -mondAchse.libration.longitude);
     const astro::Mat3 libLatitudeRot = astro::createRotationMatrix({1, 0, 0}, -mondAchse.libration.latitude);
@@ -118,7 +119,7 @@ void calculateMoon(const struct tm& time, bool printInfo, Adafruit_GC9A01A* tft 
 
     if(tft != nullptr) {
         EVAL_START();
-        int options = OPTION_DARKEN_UNLIT;
+        int options = configDisplayOptions;
         if (moonAzimutHeight.height < 0) {
             options |= OPTION_BLUISH_TINT;
         }
@@ -166,7 +167,7 @@ void berechneSonnenaufgang() {
         zeitInfo.tm_mon  + 1,
         zeitInfo.tm_mday);
 
-    astro::SunriseSunset s = astro::calculateSunriseSunset(jd, LATITUDE, LONGITUDE);
+    astro::SunriseSunset s = astro::calculateSunriseSunset(jd, configLatitude, configLongitude);
 
     if (!s.valid) {
         Serial.println("  Sonnenauf/-untergang: Polartag oder Polarnacht.");
@@ -219,8 +220,8 @@ void berechneSonnenaufgang() {
 //     double theta0 = astro::calculateSiderealTime(jd0) * 180.0 / 12.0;
 
 //     // Anfangsschätzung über Stundenwinkel bei jd0
-//     double cH0 = (sin(h0 * astro::DEG2RAD) - sin(LATITUDE * astro::DEG2RAD) * sin(r2.dek))
-//                / (cos(LATITUDE * astro::DEG2RAD) * cos(r2.dek));
+//     double cH0 = (sin(h0 * astro::DEG2RAD) - sin(configLatitude * astro::DEG2RAD) * sin(r2.dek))
+//                / (cos(configLatitude * astro::DEG2RAD) * cos(r2.dek));
 //     if (cH0 < -1.0 || cH0 > 1.0) {
 //         Serial.println("  Mondauf/-untergang: Mond geht heute nicht auf oder nicht unter.");
 //         return;
@@ -228,17 +229,17 @@ void berechneSonnenaufgang() {
 //     double H0 = acos(cH0) * astro::RAD2DEG;
 
 //     // Startwerte m ∈ [0,1] = Bruchteil des Tages
-//     double m0 = fmod((a2 - LONGITUDE - theta0) / 360.0 + 1.0, 1.0);
+//     double m0 = fmod((a2 - configLongitude - theta0) / 360.0 + 1.0, 1.0);
 //     double m1 = fmod(m0 - H0 / 360.0 + 1.0, 1.0);
 //     double m2 = fmod(m0 + H0 / 360.0 + 1.0, 1.0);
 
 //     double jd_set = jd0+fmod(m2 + 1, 1.0);
 //     double gmstStunden  = astro::calculateSiderealTime(jd_set);
-//     double siderealTime = gmstStunden * M_PI / 12.0 + LONGITUDE * astro::DEG2RAD;
+//     double siderealTime = gmstStunden * M_PI / 12.0 + configLongitude * astro::DEG2RAD;
 
 //     astro::MoonPosition moon1 = astro::calculateMoon(jd_set);
 //     astro::RaDek r_set = astro::calculateRaDek(moon1.longitude, moon1.latitude);
-//     astro::AzimutHeight moonAzimutHeight1 = astro::calculateHAzFromRaDek(r_set, siderealTime, LATITUDE  * astro::DEG2RAD);
+//     astro::AzimutHeight moonAzimutHeight1 = astro::calculateHAzFromRaDek(r_set, siderealTime, configLatitude  * astro::DEG2RAD);
 
 //     printHHMM("Mondaufgang:    ", fmod(m1 + 1.0, 1.0) * 24.0);
 //     printHHMM("Mondkulmination:", fmod(m0 + 1.0, 1.0) * 24.0);
@@ -372,10 +373,10 @@ void drawMoon(Adafruit_GC9A01A* tft, float phase, float rotation, float mask, in
 
         if(!pixelActive && (options & OPTION_DARKEN_UNLIT)) {
           // Unbeleuchteten Bereich zusätzlich abdunkeln (schwacher Schein um den Mond)
-          //fr *= 0.15f;
-          //fg *= 0.15f;
-          //fb *= 0.15f; 
-          fr = fg = fb = (fr + fg + fb) / 3.0f*0.15f;
+          fr *= 0.5f;
+          fg *= 0.5f;
+          fb *= 0.5f; 
+          //fr = fg = fb = (fr + fg + fb) / 3.0f*0.15f;
         }
 
         if(options & OPTION_BLUISH_TINT) {
