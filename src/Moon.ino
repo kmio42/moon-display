@@ -2,6 +2,7 @@
 #include <Adafruit_GC9A01A.h>
 
 #include "astro.h"
+#include "i18n.h"
 
 // Standort (Dezimalgrad) und Darstellungsoptionen – persistent in Config.ino
 extern double configLatitude;
@@ -31,7 +32,7 @@ unsigned long tStart, tEnd, tTotal;
         Serial.printf("  %s: %lu µs\n", label, tEnd - tStart); \
     } while(0);
 #define EVAL_RESET() tTotal = 0;
-#define EVAL_PRINT_TOTAL() Serial.printf("  ── Gesamt: %lu µs\n", tTotal);
+#define EVAL_PRINT_TOTAL() Serial.printf(msgs[DBG_TIMING_TOTAL], tTotal);
 #else
 #define EVAL_START()
 #define EVAL_END(label)
@@ -131,15 +132,15 @@ void calculateMoon(const struct tm& time, bool printInfo, Adafruit_GC9A01A* tft 
 
 
     if (printInfo) {
-        Serial.printf("  Julianisches Datum:       %f\n", jd);
-        Serial.printf("  Mondposition RA/Dek:      %6.2f° / %6.2f°\n", moonRaDek.ra * astro::RAD2DEG, moonRaDek.dek * astro::RAD2DEG);
-        Serial.printf("  Mondposition Azimut/Höhe: %6.2f° / %6.2f°\n", moonAzimutHeight.azimut * astro::RAD2DEG, moonAzimutHeight.height * astro::RAD2DEG);
-        Serial.printf("  Mondlibration:            %6.2f° / %6.2f°\n", mondAchse.libration.longitude * astro::RAD2DEG, mondAchse.libration.latitude * astro::RAD2DEG);
-        Serial.printf("  Mondachse:                %6.2f°\n", mondAchse.axle * astro::RAD2DEG);
-        Serial.printf("  Mondphase (0-1):          %6.4f\n", phase);
-        Serial.printf("  Mondrand:                 %6.2f°\n", (chi) * astro::RAD2DEG);
-        Serial.printf("  Parallaktischer Winkel:   %6.2f°\n", q * astro::RAD2DEG);
-        Serial.printf("  Sternzeit:                %6.2f°\n", gmstStunden);
+        Serial.printf(msgs[DBG_JULIAN_DATE],       jd);
+        Serial.printf(msgs[DBG_MOON_RADEC],        moonRaDek.ra * astro::RAD2DEG, moonRaDek.dek * astro::RAD2DEG);
+        Serial.printf(msgs[DBG_MOON_AZALT],        moonAzimutHeight.azimut * astro::RAD2DEG, moonAzimutHeight.height * astro::RAD2DEG);
+        Serial.printf(msgs[DBG_MOON_LIBRATION],    mondAchse.libration.longitude * astro::RAD2DEG, mondAchse.libration.latitude * astro::RAD2DEG);
+        Serial.printf(msgs[DBG_MOON_AXLE],         mondAchse.axle * astro::RAD2DEG);
+        Serial.printf(msgs[DBG_MOON_PHASE],        phase);
+        Serial.printf(msgs[DBG_MOON_LIMB],         (chi) * astro::RAD2DEG);
+        Serial.printf(msgs[DBG_PARALLACTIC_ANGLE], q * astro::RAD2DEG);
+        Serial.printf(msgs[DBG_SIDEREAL_TIME],     gmstStunden);
         Serial.printf(" rot:                      %f\n", rot);
         Serial.printf(" mask:                     %f\n", mask);
     }
@@ -159,7 +160,7 @@ static void printHHMM(const char* label, double decimalHours) {
 void berechneSonnenaufgang() {
     struct tm zeitInfo;
     if (!getLocalTime(&zeitInfo)) {
-        Serial.println("Keine gültige NTP-Zeit für Sonnenberechnung.");
+        Serial.println(msgs[ERR_NO_NTP_SUN]);
         return;
     }
     double jd = astro::calculateJulianDate(
@@ -170,11 +171,11 @@ void berechneSonnenaufgang() {
     astro::SunriseSunset s = astro::calculateSunriseSunset(jd, configLatitude, configLongitude);
 
     if (!s.valid) {
-        Serial.println("  Sonnenauf/-untergang: Polartag oder Polarnacht.");
+        Serial.println(msgs[MSG_POLAR_DAY_NIGHT]);
         return;
     }
-    printHHMM("Sonnenaufgang:", s.rising + 2);
-    printHHMM("Sonnenuntergang:", s.setting + 2);
+    printHHMM(msgs[HHMM_SUNRISE], s.rising + 2);
+    printHHMM(msgs[HHMM_SUNSET],  s.setting + 2);
 }
 
 // ── Display ──────────────────────────────────────────────────────────────────

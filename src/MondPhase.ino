@@ -11,6 +11,8 @@
 #include <WiFi.h>
 #include <WiFiMulti.h>
 #include <time.h>
+#include <strings.h>
+#include <esp_sntp.h>
 
 #include <Adafruit_GFX.h>     // Core graphics library
 #include <Adafruit_GC9A01A.h>
@@ -20,13 +22,15 @@
 // ── Konfiguration ────────────────────────────────────────────────────────────
 
 #include "credentials.h"
+#include "options_config.h"
+#include "i18n.h"
 
 WiFiMulti wifiMulti;
 
 // NTP
-constexpr long   GMT_OFFSET_SEC  = 0;    // UTC verwenden; Zeitzone lokal egal
-constexpr int    DAYLIGHT_OFFSET = 0;
-constexpr char   NTP_SERVER[]    = "pool.ntp.org";
+constexpr long   GMT_OFFSET_SEC  = OPTIONS_CONFIG_DEFAULT_GMT_OFFSET_SEC;
+constexpr int    DAYLIGHT_OFFSET = OPTIONS_CONFIG_DEFAULT_DAYLIGHT_OFFSET;
+constexpr char   NTP_SERVER[]    = OPTIONS_CONFIG_DEFAULT_NTP_SERVER;
 
 // Mond-Rendering
 extern void calculateMoon(const struct tm& timeinfo, bool printInfo, Adafruit_GC9A01A* tft);
@@ -35,6 +39,7 @@ extern void calculateMoon(const struct tm& timeinfo, bool printInfo, Adafruit_GC
 extern double configLatitude;
 extern double configLongitude;
 extern int    configDisplayOptions;
+extern int    configLanguage;
 extern void   loadConfig();
 extern void   saveConfig();
 
@@ -55,14 +60,12 @@ bool wifiOn = true;
 char serial_command_buffer_[100];
 SerialCommands serial_commands_(&Serial, serial_command_buffer_, sizeof(serial_command_buffer_), "\r\n", " ");
 
-//This is the default handler, and gets called when no other command matches. 
+//This is the default handler, and gets called when no other command matches.
 // Note: It does not get called for one_key commands that do not match
 void cmd_unrecognized(SerialCommands* sender, const char* cmd)
 {
-  sender->GetSerial()->print("Unrecognized command [");
-  sender->GetSerial()->print(cmd);
-  sender->GetSerial()->println("]");
-  sender->GetSerial()->println("Type 'help' for a list of commands.");
+  sender->GetSerial()->printf(msgs[FMT_UNRECOGNIZED_CMD], cmd);
+  sender->GetSerial()->println(msgs[MSG_TYPE_HELP_FOR_COMMANDS]);
 }
 
 bool parseDateTime(const char* arg, struct tm& tm) {
@@ -98,28 +101,28 @@ void cmd_moon(SerialCommands* sender)
             snprintf(datetime, sizeof(datetime), "%s", arg0);
         }
         if (!parseDateTime(datetime, tm)) {
-            sender->GetSerial()->println("Ungültiges Format:");
+            sender->GetSerial()->println(msgs[ERR_INVALID_FORMAT_LABEL]);
             sender->GetSerial()->println(datetime);
-            sender->GetSerial()->println("Erwartet: HH:MM:SS oder TT.MM.JJJJ HH:MM:SS");
+            sender->GetSerial()->println(msgs[MSG_EXPECTED_TIME_FORMAT]);
             return;
         }
     } else {
         if (!getLocalTime(&tm)) {
-            sender->GetSerial()->println("Keine gültige NTP-Zeit verfügbar.");
+            sender->GetSerial()->println(msgs[ERR_NO_NTP_TIME]);
             return;
         }
     }
 
-    sender->GetSerial()->println("Calculating moon position...");
+    sender->GetSerial()->println(msgs[MSG_CALCULATING_MOON]);
     currentMode = MODE_STATIC;
     calculateMoon(tm, true, &tft);
-    sender->GetSerial()->println("Done.");
+    sender->GetSerial()->println(msgs[MSG_DONE]);
 }
 SerialCommand cmd_moon_("moon", cmd_moon);
 
 void cmd_moon_run_(SerialCommands* sender)
 {
-    sender->GetSerial()->println("Starting dynamic moon display...");
+    sender->GetSerial()->println(msgs[MSG_STARTING_DYNAMIC_MOON]);
     currentMode = MODE_MOON;
 }
 SerialCommand cmd_moon_run("moon_run", cmd_moon_run_);
@@ -129,7 +132,7 @@ void cmd_set_time_(SerialCommands* sender)
     const char* arg0 = sender->Next();
     const char* arg1 = sender->Next();
     if (arg0 == nullptr || (arg1 != nullptr && sender->Next() != nullptr)) {
-        sender->GetSerial()->println("Ungültiges Format. Erwartet: TT.MM.JJJJ HH:MM:SS");
+        sender->GetSerial()->println(msgs[ERR_INVALID_DATETIME_FORMAT]);
         return;
     }
     struct tm tm;
@@ -138,19 +141,19 @@ void cmd_set_time_(SerialCommands* sender)
         snprintf(datetime, sizeof(datetime), "%s %s", arg0, arg1);
     }
     if (!parseDateTime(datetime, tm)) {
-        sender->GetSerial()->println("Ungültiges Format. Erwartet: TT.MM.JJJJ HH:MM:SS");
+        sender->GetSerial()->println(msgs[ERR_INVALID_DATETIME_FORMAT]);
         return;
     }
     time_t t = mktime(&tm);
     struct timeval now = { .tv_sec = t };
     settimeofday(&now, nullptr);
-    sender->GetSerial()->println("Zeit aktualisiert.");
+    sender->GetSerial()->println(msgs[MSG_TIME_UPDATED]);
 }
 SerialCommand cmd_set_time("set_time", cmd_set_time_);
 
 void cmd_wifi_(SerialCommands* sender)
 {
-    sender->GetSerial()->println("Aktuelle WLAN-Verbindungen:");
+    sender->GetSerial()->println(msgs[MSG_WIFI_CONNECTIONS]);
     sender->GetSerial()->print(WiFi.SSID());
     sender->GetSerial()->print(" (");
     sender->GetSerial()->print(WiFi.RSSI());
@@ -159,14 +162,14 @@ void cmd_wifi_(SerialCommands* sender)
     const char *arg0 = sender->Next();
     if (arg0 != nullptr) {
         if(strcmp(arg0, "on") == 0) {
-            sender->GetSerial()->println("WLAN-Verbindung aktivieren...");
+            sender->GetSerial()->println(msgs[MSG_WIFI_ENABLING]);
             wifiOn = true;
         } else if (strcmp(arg0, "off") == 0) {
-            sender->GetSerial()->println("WLAN-Verbindung trennen...");
+            sender->GetSerial()->println(msgs[MSG_WIFI_DISABLING]);
             WiFi.disconnect(true);
             wifiOn = false;
         } else {
-            sender->GetSerial()->println("Ungültiges Argument. Erwartet: on oder off");
+            sender->GetSerial()->println(msgs[ERR_INVALID_WIFI_ARG]);
         }
     }
 }
@@ -177,7 +180,7 @@ void cmd_set_location_(SerialCommands* sender)
     const char* arg0 = sender->Next();
     const char* arg1 = sender->Next();
     if (arg0 == nullptr || arg1 == nullptr) {
-        sender->GetSerial()->println("Ungültiges Format. Erwartet: set_location <lat> <lon>");
+        sender->GetSerial()->println(msgs[ERR_INVALID_LOCATION_FORMAT]);
         return;
     }
     char* endLat = nullptr;
@@ -185,13 +188,13 @@ void cmd_set_location_(SerialCommands* sender)
     double lat = strtod(arg0, &endLat);
     double lon = strtod(arg1, &endLon);
     if (endLat == arg0 || endLon == arg1 || lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) {
-        sender->GetSerial()->println("Ungültige Werte. Lat: -90..90, Lon: -180..180");
+        sender->GetSerial()->println(msgs[ERR_INVALID_COORDINATES]);
         return;
     }
     configLatitude  = lat;
     configLongitude = lon;
     saveConfig();
-    sender->GetSerial()->printf("Standort gespeichert: %.6f / %.6f\n", configLatitude, configLongitude);
+    sender->GetSerial()->printf(msgs[FMT_LOCATION_SAVED], configLatitude, configLongitude);
 }
 SerialCommand cmd_set_location("set_location", cmd_set_location_);
 
@@ -199,46 +202,99 @@ void cmd_set_options_(SerialCommands* sender)
 {
     const char* arg0 = sender->Next();
     if (arg0 == nullptr) {
-        sender->GetSerial()->println("Ungültiges Format. Erwartet: set_options <wert>");
+        sender->GetSerial()->println(msgs[ERR_INVALID_OPTIONS_FORMAT]);
         return;
     }
     char* end = nullptr;
     long value = strtol(arg0, &end, 0); // 0 = autodetect dec/hex/oct
     if (end == arg0 || value < 0 || value > 0x7FFFFFFF) {
-        sender->GetSerial()->println("Ungültiger Wert für Options.");
+        sender->GetSerial()->println(msgs[ERR_INVALID_OPTIONS_VALUE]);
         return;
     }
     configDisplayOptions = (int) value;
     saveConfig();
-    sender->GetSerial()->printf("Display-Optionen gespeichert: %d\n", configDisplayOptions);
+    sender->GetSerial()->printf(msgs[FMT_OPTIONS_SAVED], configDisplayOptions);
 }
 SerialCommand cmd_set_options("set_options", cmd_set_options_);
 
+void cmd_set_lang_(SerialCommands* sender)
+{
+    const char* arg0 = sender->Next();
+    if (arg0 == nullptr) {
+        sender->GetSerial()->println(msgs[ERR_INVALID_LANG]);
+        return;
+    }
+    Language newLang;
+    if (strcasecmp(arg0, "de") == 0) {
+        newLang = LANG_DE;
+    } else if (strcasecmp(arg0, "en-us") == 0 || strcasecmp(arg0, "en") == 0) {
+        newLang = LANG_EN_US;
+    } else {
+        sender->GetSerial()->println(msgs[ERR_INVALID_LANG]);
+        return;
+    }
+    configLanguage = (int) newLang;
+    setLanguage(newLang);
+    saveConfig();
+    // Confirmation prints in the newly-selected language.
+    sender->GetSerial()->println(msgs[MSG_LANGUAGE_SET]);
+}
+SerialCommand cmd_set_lang("set_lang", cmd_set_lang_);
+
 void cmd_config_(SerialCommands* sender)
 {
-    sender->GetSerial()->println("Aktuelle Konfiguration:");
-    sender->GetSerial()->printf("  Latitude:  %.6f\n", configLatitude);
-    sender->GetSerial()->printf("  Longitude: %.6f\n", configLongitude);
-    sender->GetSerial()->printf("  Options:   %d (0x%X)\n", configDisplayOptions, configDisplayOptions);
-    sender->GetSerial()->printf("    [%c] darken_unlit    (1)\n",   (configDisplayOptions & 1) ? 'x' : ' ');
-    sender->GetSerial()->printf("    [%c] bluish_tint     (2)\n",   (configDisplayOptions & 2) ? 'x' : ' ');
-    sender->GetSerial()->printf("    [%c] use_nasa_model  (4)\n",   (configDisplayOptions & 4) ? 'x' : ' ');
-    sender->GetSerial()->printf("    [%c] use_libration   (8)\n",   (configDisplayOptions & 8) ? 'x' : ' ');
+    sender->GetSerial()->println(msgs[MSG_CONFIG_HEADER]);
+    sender->GetSerial()->printf(msgs[FMT_CONFIG_LATITUDE],  configLatitude);
+    sender->GetSerial()->printf(msgs[FMT_CONFIG_LONGITUDE], configLongitude);
+
+    struct tm now;
+    if (getLocalTime(&now, 0)) {
+        char buf[32];
+        strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S UTC", &now);
+        sender->GetSerial()->printf(msgs[FMT_CONFIG_TIME], buf);
+    } else {
+        sender->GetSerial()->println(msgs[MSG_CONFIG_TIME_UNAVAILABLE]);
+    }
+
+    const char* ntpStatus = msgs[MSG_NTP_UNKNOWN];
+    switch (sntp_get_sync_status()) {
+        case SNTP_SYNC_STATUS_RESET:       ntpStatus = msgs[MSG_NTP_NOT_SYNCED]; break;
+        case SNTP_SYNC_STATUS_COMPLETED:   ntpStatus = msgs[MSG_NTP_SYNCED];     break;
+        case SNTP_SYNC_STATUS_IN_PROGRESS: ntpStatus = msgs[MSG_NTP_SYNCING];    break;
+    }
+    sender->GetSerial()->printf(msgs[FMT_CONFIG_NTP], ntpStatus, NTP_SERVER);
+
+    if (!wifiOn) {
+        sender->GetSerial()->println(msgs[MSG_CONFIG_WIFI_DISABLED]);
+    } else if (WiFi.status() == WL_CONNECTED) {
+        sender->GetSerial()->printf(msgs[FMT_CONFIG_WIFI_CONNECTED],
+            WiFi.SSID().c_str(), (int) WiFi.RSSI(), WiFi.localIP().toString().c_str());
+    } else {
+        sender->GetSerial()->println(msgs[MSG_CONFIG_WIFI_DISCONNECTED]);
+    }
+
+    sender->GetSerial()->printf(msgs[FMT_CONFIG_OPTIONS],       configDisplayOptions, configDisplayOptions);
+    sender->GetSerial()->printf(msgs[FMT_CONFIG_OPT_DARKEN],    (configDisplayOptions & 1) ? 'x' : ' ');
+    sender->GetSerial()->printf(msgs[FMT_CONFIG_OPT_BLUISH],    (configDisplayOptions & 2) ? 'x' : ' ');
+    sender->GetSerial()->printf(msgs[FMT_CONFIG_OPT_NASA],      (configDisplayOptions & 4) ? 'x' : ' ');
+    sender->GetSerial()->printf(msgs[FMT_CONFIG_OPT_LIBRATION], (configDisplayOptions & 8) ? 'x' : ' ');
+    sender->GetSerial()->print(msgs[MSG_LANGUAGE_LINE]);  // trailing \n is part of the token
 }
 SerialCommand cmd_config("config", cmd_config_);
 
 void cmd_help(SerialCommands* sender)
 {
-  sender->GetSerial()->println("Available commands:");
-  sender->GetSerial()->println("  help - Show this help message");
-  sender->GetSerial()->println("  moon [HH:MM:SS | DD.MM.YYYY HH:MM:SS] - Display moon phase for given time (or current time if no argument)");
-  sender->GetSerial()->println("  moon_run - Start dynamic moon display (updates every minute)");
-  sender->GetSerial()->println("  wifi [on|off] - Turn WiFi on or off");
-  sender->GetSerial()->println("  set_time TT.MM.JJJJ HH:MM:SS - Set system time (UTC)");
-  sender->GetSerial()->println("  set_location <lat> <lon> - Standort persistent speichern (Dezimalgrad)");
-  sender->GetSerial()->println("  set_options <wert> - Darstellungsoptionen persistent speichern (Bitfeld)");
-  sender->GetSerial()->println("    Bits: 1=darken_unlit, 2=bluish_tint, 4=use_nasa_model, 8=use_libration");
-  sender->GetSerial()->println("  config - Aktuelle Konfiguration anzeigen");
+  sender->GetSerial()->println(msgs[HELP_HEADER]);
+  sender->GetSerial()->println(msgs[HELP_HELP]);
+  sender->GetSerial()->println(msgs[HELP_MOON]);
+  sender->GetSerial()->println(msgs[HELP_MOON_RUN]);
+  sender->GetSerial()->println(msgs[HELP_WIFI]);
+  sender->GetSerial()->println(msgs[HELP_SET_TIME]);
+  sender->GetSerial()->println(msgs[HELP_SET_LOCATION]);
+  sender->GetSerial()->println(msgs[HELP_SET_OPTIONS]);
+  sender->GetSerial()->println(msgs[HELP_OPTIONS_BITS]);
+  sender->GetSerial()->println(msgs[HELP_CONFIG]);
+  sender->GetSerial()->println(msgs[HELP_SET_LANG]);
 }
 SerialCommand cmd_help_("help", cmd_help);
 
@@ -251,6 +307,7 @@ void setupSerialCommands() {
     serial_commands_.AddCommand(&cmd_set_location);
     serial_commands_.AddCommand(&cmd_set_options);
     serial_commands_.AddCommand(&cmd_config);
+    serial_commands_.AddCommand(&cmd_set_lang);
     serial_commands_.SetDefaultHandler(cmd_unrecognized);
 }
 
@@ -281,7 +338,7 @@ unsigned long lastMoonCalc = 60000; // Erzwinge Berechnung direkt nach Start, da
 unsigned long lastWifiCheck = 0;
 
 void loop() {
-    
+
     if (wifiOn && millis() - lastWifiCheck > 1000) {
         wifiMulti.run(1000);
         lastWifiCheck = millis();
@@ -290,7 +347,7 @@ void loop() {
     serial_commands_.ReadSerial();
     struct tm zeitInfo;
     if (currentMode == MODE_MOON && getLocalTime(&zeitInfo) && (millis() - lastMoonCalc > 60000)) {
-        Serial.println("Updating moon display...");
+        Serial.println(msgs[MSG_UPDATING_MOON]);
         calculateMoon(zeitInfo, false, &tft);
         lastMoonCalc = millis();
     } else if (currentMode == MODE_DISPLAY) {
@@ -302,5 +359,3 @@ void loop() {
     //berechneSonnenaufgang();
     //berechneMondaufgang();
 }
-
-

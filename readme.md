@@ -38,6 +38,17 @@ The NTP server and UTC offset are configured in `src/MondPhase.ino`:
 constexpr char NTP_SERVER[] = "pool.ntp.org";
 ```
 
+### Compile-time defaults
+The values that would otherwise be set with the serial commands `set_location` and `set_options` can also be configured at compile time in `src/options_config.h`:
+
+```cpp
+#define OPTIONS_CONFIG_DEFAULT_LATITUDE   39.00
+#define OPTIONS_CONFIG_DEFAULT_LONGITUDE  -76.45
+#define OPTIONS_CONFIG_DEFAULT_OPTIONS    11
+```
+
+These values are used on first boot (or after an NVS erase). The runtime serial commands described below still work and continue to override the compile-time defaults — once overridden, the new values are stored in NVS and take precedence until NVS is erased. See the **Display options bitmask** table below for the meaning of the options value.
+
 ### Runtime configuration via serial interface
 All runtime settings are stored in flash (NVS) and survive reboots. Connect at **115200 baud** and use the following commands:
 
@@ -78,7 +89,8 @@ Example: `set_options 9` enables earthshine + libration.
 1. Clone or download this repository and open the folder in VS Code.
 2. pioarduino will automatically install the required libraries on first build.
 3. Copy `src/credentials.h.template` to `src/credentials.h` and fill in your Wi-Fi credentials.
-4. Connect the ESP32-C3 via USB.
-5. Click **Upload** in the pioarduino toolbar (or run `platformio run --target upload`) to build and flash the firmware.
-6. Use the pioarduino **Serial Monitor** at 115200 baud to view debug output.
+4. (Optional) Edit `src/options_config.h` to set your observer location and preferred display options. The shipped defaults will be used otherwise.
+5. Connect the ESP32-C3 via USB.
+6. Click **Upload** in the pioarduino toolbar (or run `platformio run --target upload`) to build and flash the firmware.
+7. Use the pioarduino **Serial Monitor** at 115200 baud to view debug output.
 
