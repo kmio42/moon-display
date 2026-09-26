@@ -130,6 +130,8 @@ Example: `set_options 9` enables earthshine + libration.
 * Grey line at the bottom: day boundary (midnight)
 * Centre: current moon, rendered like the moon display
 
+![24-hour clock mode](clockmode.png)
+
 ## Hardware
 * ESP32-C3 Super Mini
 * 1.28 inch round IPS display (GC9A01)
