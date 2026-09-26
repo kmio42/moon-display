@@ -53,6 +53,20 @@ struct SunriseSunset {
     bool valid;
 };
 
+// Mondauf-/-untergang, Meridiandurchgang und höchster Stand eines UT-Tags.
+// Zeiten in UT-Stunden ab Mitternacht.
+struct MoonRiseSet {
+    bool   hasRise;          // Aufgang an diesem UT-Tag
+    bool   hasSet;           // Untergang an diesem UT-Tag
+    bool   hasTransit;       // Meridiandurchgang (Stundenwinkel 0) an diesem UT-Tag
+    bool   aboveAtStart;     // Mond um 0 Uhr UT über dem Horizont
+    double riseHours;
+    double setHours;
+    double transitHours;
+    double maxAltitude;      // Höchste Höhe über der Aufgangshöhe in Radiant
+    double maxAltitudeHours;
+};
+
 struct Vec3 {
     double x, y, z;
 };
@@ -112,6 +126,7 @@ double calculateRisingKnotMoon(double jd);
 double calculateMoonPhase(const RaDek& sunRaDek, double sunDistance,
                           const RaDek& moonRaDek, double moonDistance);
 MoonAxle calculateMoonAxle(double jd, const MoonPosition& moon);
+MoonRiseSet calculateMoonRiseSet(double jd, double longitude, double latitude);
 
 // Matrix-Operationen
 Mat3 createRotationMatrix(const Vec3& axle, double angle);

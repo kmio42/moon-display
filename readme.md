@@ -14,6 +14,7 @@ An internet connection is only needed as a time source — all astronomical calc
 * Texture options: high-resolution texture from NASA's CGI Moon Kit or self-taken photograph
 * Optional dimming of the unilluminated lunar side
 * Optional bluish tint when the moon is below the horizon
+* Telegram bot for changing settings, querying current sun/moon coordinates and an optional daily report
 * Serial interface (115200 baud) for settings and debug output: Julian date, RA/Dec, azimuth/altitude, libration, phase, parallactic angle, sidereal time, rotation, mask, sunrise/sunset times
 
 ## Configuration
@@ -31,6 +32,30 @@ Copy `src/credentials.h.template` to `src/credentials.h` and add your networks:
 #define WIFI_SSID_3     ""   // leave empty, if not used
 #define WIFI_PASSWORD_3 ""
 ```
+
+### Telegram bot (optional)
+1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
+2. Find your own chat ID, e.g. with [@userinfobot](https://t.me/userinfobot).
+3. Add both to `src/credentials.h`:
+```cpp
+#define TELEGRAM_BOT_TOKEN "123456:ABC..."
+#define TELEGRAM_CHAT_ID   "12345678"
+```
+The bot only answers messages from this chat ID. Leave the token empty to disable the bot.
+
+| Command | Description |
+|---|---|
+| `/mond` | Current moon coordinates: RA/Dec, azimuth/altitude, distance, phase, libration |
+| `/sonne` | Current sun coordinates: RA/Dec, azimuth/altitude |
+| `/bericht` | Send the daily report now |
+| `/config` | Show current configuration |
+| `/standort <lat> <lon>` | Set observer location in decimal degrees |
+| `/optionen <value>` | Set display options bitmask (see below) |
+| `/auto on\|off` | Enable or disable the daily report (auto mode) |
+| `/autozeit HH:MM` | Time of the daily report (local time) |
+| `/zeitzone <POSIX-TZ>` | Time zone used for all displayed times |
+
+**Auto mode:** once a day at the configured time the bot sends a report with sunrise and sunset, the change of sunset time compared to the previous day, moonrise and moonset, and the current moon phase. Sunrise/sunset are calculated with Meeus' method, moonrise/moonset by hourly sampling of the moon's altitude with quadratic (Lagrange) interpolation of the horizon crossing, using the horizon altitude after Meeus. All calculations are done in UT; the report covers the local calendar day (events of the UT days overlapping it are converted to local time and filtered by local date).
 
 ### NTP server
 The NTP server and UTC offset are configured in `src/MondPhase.ino`:
@@ -51,6 +76,9 @@ All runtime settings are stored in flash (NVS) and survive reboots. Connect at *
 | `moon_run` | Start live display (updates every minute) |
 | `set_time DD.MM.YYYY HH:MM:SS` | Set system time manually (UTC) |
 | `wifi [on\|off]` | Enable or disable Wi-Fi |
+| `set_auto on\|off` | Enable or disable the daily Telegram report |
+| `set_autotime HH:MM` | Time of the daily Telegram report (local time) |
+| `set_timezone <POSIX-TZ>` | Time zone for displayed times (default `CET-1CEST,M3.5.0,M10.5.0/3`) |
 
 **Display options bitmask** (combine with `+`):
 
@@ -73,11 +101,13 @@ Example: `set_options 9` enables earthshine + libration.
   * `Adafruit GFX Library`
   * `Adafruit GC9A01A`
   * `SerialCommands`
+  * `UniversalTelegramBot`
+  * `ArduinoJson` (v6)
 
 ## Building and Flashing
 1. Clone or download this repository and open the folder in VS Code.
 2. pioarduino will automatically install the required libraries on first build.
-3. Copy `src/credentials.h.template` to `src/credentials.h` and fill in your Wi-Fi credentials.
+3. Copy `src/credentials.h.template` to `src/credentials.h` and fill in your Wi-Fi credentials (and optionally the Telegram bot token and chat ID).
 4. Connect the ESP32-C3 via USB.
 5. Click **Upload** in the pioarduino toolbar (or run `platformio run --target upload`) to build and flash the firmware.
 6. Use the pioarduino **Serial Monitor** at 115200 baud to view debug output.

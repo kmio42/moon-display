@@ -35,8 +35,18 @@ extern void calculateMoon(const struct tm& timeinfo, bool printInfo, Adafruit_GC
 extern double configLatitude;
 extern double configLongitude;
 extern int    configDisplayOptions;
+extern bool   configAutoMode;
+extern int    configAutoTime;
+extern String configTimezone;
 extern void   loadConfig();
 extern void   saveConfig();
+extern bool   isValidTimezone(const char* tz);
+extern int    parseHHMM(const char* s);
+
+// Telegram-Bot (definiert in Telegram.ino)
+extern void setupTelegram();
+extern void handleTelegram();
+extern void resetAutoReportDay();
 
 // Display
 #define TFT_CS 7
@@ -214,6 +224,52 @@ void cmd_set_options_(SerialCommands* sender)
 }
 SerialCommand cmd_set_options("set_options", cmd_set_options_);
 
+void cmd_set_auto_(SerialCommands* sender)
+{
+    const char* arg0 = sender->Next();
+    if (arg0 != nullptr && strcmp(arg0, "on") == 0) {
+        configAutoMode = true;
+    } else if (arg0 != nullptr && strcmp(arg0, "off") == 0) {
+        configAutoMode = false;
+    } else {
+        sender->GetSerial()->println("Ungültiges Argument. Erwartet: set_auto on|off");
+        return;
+    }
+    saveConfig();
+    resetAutoReportDay();
+    sender->GetSerial()->printf("Auto-Modus gespeichert: %s\n", configAutoMode ? "an" : "aus");
+}
+SerialCommand cmd_set_auto("set_auto", cmd_set_auto_);
+
+void cmd_set_autotime_(SerialCommands* sender)
+{
+    const char* arg0 = sender->Next();
+    int minutes = (arg0 != nullptr) ? parseHHMM(arg0) : -1;
+    if (minutes < 0) {
+        sender->GetSerial()->println("Ungültiges Format. Erwartet: set_autotime HH:MM");
+        return;
+    }
+    configAutoTime = minutes;
+    saveConfig();
+    resetAutoReportDay();
+    sender->GetSerial()->printf("Berichtszeit gespeichert: %02d:%02d\n", configAutoTime / 60, configAutoTime % 60);
+}
+SerialCommand cmd_set_autotime("set_autotime", cmd_set_autotime_);
+
+void cmd_set_timezone_(SerialCommands* sender)
+{
+    const char* arg0 = sender->Next();
+    if (arg0 == nullptr || !isValidTimezone(arg0)) {
+        sender->GetSerial()->println("Ungültige Zeitzone. Beispiel: set_timezone CET-1CEST,M3.5.0,M10.5.0/3");
+        return;
+    }
+    configTimezone = arg0;
+    saveConfig();
+    resetAutoReportDay();
+    sender->GetSerial()->printf("Zeitzone gespeichert: %s\n", configTimezone.c_str());
+}
+SerialCommand cmd_set_timezone("set_timezone", cmd_set_timezone_);
+
 void cmd_config_(SerialCommands* sender)
 {
     sender->GetSerial()->println("Aktuelle Konfiguration:");
@@ -224,6 +280,8 @@ void cmd_config_(SerialCommands* sender)
     sender->GetSerial()->printf("    [%c] bluish_tint     (2)\n",   (configDisplayOptions & 2) ? 'x' : ' ');
     sender->GetSerial()->printf("    [%c] use_nasa_model  (4)\n",   (configDisplayOptions & 4) ? 'x' : ' ');
     sender->GetSerial()->printf("    [%c] use_libration   (8)\n",   (configDisplayOptions & 8) ? 'x' : ' ');
+    sender->GetSerial()->printf("  Auto-Modus: %s, täglich um %02d:%02d\n", configAutoMode ? "an" : "aus", configAutoTime / 60, configAutoTime % 60);
+    sender->GetSerial()->printf("  Zeitzone:  %s\n", configTimezone.c_str());
 }
 SerialCommand cmd_config("config", cmd_config_);
 
@@ -238,6 +296,9 @@ void cmd_help(SerialCommands* sender)
   sender->GetSerial()->println("  set_location <lat> <lon> - Standort persistent speichern (Dezimalgrad)");
   sender->GetSerial()->println("  set_options <wert> - Darstellungsoptionen persistent speichern (Bitfeld)");
   sender->GetSerial()->println("    Bits: 1=darken_unlit, 2=bluish_tint, 4=use_nasa_model, 8=use_libration");
+  sender->GetSerial()->println("  set_auto on|off - Täglichen Telegram-Bericht ein/aus");
+  sender->GetSerial()->println("  set_autotime HH:MM - Uhrzeit des Telegram-Berichts (Lokalzeit)");
+  sender->GetSerial()->println("  set_timezone <POSIX-TZ> - Zeitzone für Ausgaben, z. B. CET-1CEST,M3.5.0,M10.5.0/3");
   sender->GetSerial()->println("  config - Aktuelle Konfiguration anzeigen");
 }
 SerialCommand cmd_help_("help", cmd_help);
@@ -250,6 +311,9 @@ void setupSerialCommands() {
     serial_commands_.AddCommand(&cmd_wifi);
     serial_commands_.AddCommand(&cmd_set_location);
     serial_commands_.AddCommand(&cmd_set_options);
+    serial_commands_.AddCommand(&cmd_set_auto);
+    serial_commands_.AddCommand(&cmd_set_autotime);
+    serial_commands_.AddCommand(&cmd_set_timezone);
     serial_commands_.AddCommand(&cmd_config);
     serial_commands_.SetDefaultHandler(cmd_unrecognized);
 }
@@ -275,10 +339,18 @@ void setup() {
 
     // Serial Commands
     setupSerialCommands();
+
+    setupTelegram();
 }
 
 unsigned long lastMoonCalc = 60000; // Erzwinge Berechnung direkt nach Start, da loop() erst nach 60s aktualisiert
 unsigned long lastWifiCheck = 0;
+
+// Erzwingt ein Neuzeichnen des Live-Mondes im nächsten loop()-Durchlauf.
+void requestMoonRedraw() {
+    currentMode = MODE_MOON;
+    lastMoonCalc = millis() - 60001;
+}
 
 void loop() {
     
@@ -288,6 +360,7 @@ void loop() {
     }
 
     serial_commands_.ReadSerial();
+    handleTelegram();
     struct tm zeitInfo;
     if (currentMode == MODE_MOON && getLocalTime(&zeitInfo) && (millis() - lastMoonCalc > 60000)) {
         Serial.println("Updating moon display...");

@@ -2,6 +2,7 @@
 #include <Adafruit_GC9A01A.h>
 
 #include "astro.h"
+#include "ephemeris.h"
 
 // Standort (Dezimalgrad) und Darstellungsoptionen – persistent in Config.ino
 extern double configLatitude;
@@ -39,76 +40,26 @@ unsigned long tStart, tEnd, tTotal;
 #define EVAL_PRINT_TOTAL()
 #endif
 
-static double julianDateVonTm(const struct tm& t) {
-    return astro::calculateJulianDate(
-        t.tm_year + 1900,
-        t.tm_mon  + 1,
-        t.tm_mday,
-        t.tm_hour,
-        t.tm_min,
-        t.tm_sec,
-        0
-    );
-}
-
 void calculateMoon(const struct tm& time, bool printInfo, Adafruit_GC9A01A* tft = nullptr) {
 
     EVAL_START();
-    double jd = julianDateVonTm(time);
-    EVAL_END("Julianisches Datum");
+    SkyState sky = computeSky(time);
+    EVAL_END("Sonne & Mond");
 
-    // Lokale Sternzeit in Radiant (GMST + Längengrad-Offset)
-    EVAL_START();
-    double gmstStunden  = astro::calculateSiderealTime(jd);
-    double siderealTime = gmstStunden * M_PI / 12.0 + configLongitude * astro::DEG2RAD;
-    EVAL_END("Sternzeit");
-
-    // ── Sonnenposition ───────────────────────────────────────────────────────
-    EVAL_START();
-    double eklLaenge    = astro::calculateEclipticalLength(jd);
-
-    astro::RaDek sunRaDek = astro::calculateRaDek(eklLaenge, 0.0);
-    double sun_distance = 149597870;  // in km (1 AE)
-    EVAL_END("Sonnenposition");
-
-    // ── Mondposition ─────────────────────────────────────────────────────────
-    EVAL_START();
-    astro::MoonPosition moon = astro::calculateMoon(jd);
-
-    astro::RaDek moonRaDek = astro::calculateRaDek(moon.longitude, moon.latitude);
-    double moonParallax = asin(6378.14/moon.distance);
-
-    moonRaDek = astro::calculateParallax(moonRaDek, moonParallax, siderealTime, configLatitude * astro::DEG2RAD);
-    EVAL_END("Mondposition RA/Dek");
-
-    // ── Mondachse & Libration ────────────────────────────────────────────────
-    EVAL_START();
-    astro::MoonAxle mondAchse = astro::calculateMoonAxle(jd, moon);
-    EVAL_END("Mondachse/Libration");
-
-    // ── Mondphase und parallaktischer Winkel ──────────────────────────────────
-    EVAL_START();
-
-    double phase = calculateMoonPhase(sunRaDek, sun_distance, moonRaDek, moon.distance);
-
-    // Positionswinkel (Mitte) des beleuchteten Mondrandes
-    // Formel 46.5 aus "Astronomische Algorithmen, 2. Auflage" von Jean Meeus.
-    double chi = atan2(cos(sunRaDek.dek) * sin(sunRaDek.ra - moonRaDek.ra),
-                       sin(sunRaDek.dek) * cos(moonRaDek.dek)
-                     - cos(sunRaDek.dek) * sin(moonRaDek.dek) * cos(sunRaDek.ra - moonRaDek.ra));
-
-
-    // ── Parallaktischer Winkel für Mond (Ortsabhängig) ─────────────────────────
-    EVAL_START();
-    double q = calculateParallacticAngle(moonRaDek, siderealTime, configLatitude * astro::DEG2RAD);
-    EVAL_END("Mondphase & Parallaktischer Winkel");
+    double jd = sky.jd;
+    double gmstStunden = sky.gmstHours;
+    astro::RaDek moonRaDek = sky.moonRaDek;
+    astro::MoonAxle mondAchse = sky.moonAxle;
+    double phase = sky.phase;
+    double chi = sky.chi;
+    double q = sky.q;
 
     // Zenitwinkel des hellen Mondrandes: chi - q
     double mask = (chi - q + M_PI/2);
 
     double rot = (mondAchse.axle-q + 0.004919 - 0.116413461); //ermittelte Korrektur mit Stellarium
 
-    astro::AzimutHeight moonAzimutHeight = astro::calculateHAzFromRaDek(moonRaDek, siderealTime, configLatitude  * astro::DEG2RAD);
+    astro::AzimutHeight moonAzimutHeight = sky.moonAzH;
 
     const astro::Mat3 libLongitudeRot = astro::createRotationMatrix({0, -1, 0}, -mondAchse.libration.longitude);
     const astro::Mat3 libLatitudeRot = astro::createRotationMatrix({1, 0, 0}, -mondAchse.libration.latitude);

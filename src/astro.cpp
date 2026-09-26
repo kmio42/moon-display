@@ -840,6 +840,152 @@ MoonAxle calculateMoonAxle(double jd, const MoonPosition& moon) {
     return {{l1 + l2, b1 + b2}, P};
 }
 
+// Hilfsfunktionen für Mondauf-/-untergang
+namespace {
+
+// Koeffizienten der Parabel p(u) = A*u^2 + B*u + C durch die Punkte (0, y0), (1, y1), (2, y2).
+// Herleitung über die Lagrange-Darstellung
+//   p(u) = y0*(u-1)(u-2)/2 - y1*u(u-2) + y2*u(u-1)/2
+// und Ausmultiplizieren nach Potenzen von u.
+void parabolaCoefficients(double y0, double y1, double y2, double& A, double& B, double& C) {
+    A = 0.5 * (y0 - 2.0 * y1 + y2);
+    B = 0.5 * (-3.0 * y0 + 4.0 * y1 - y2);
+    C = y0;
+}
+
+// Sucht eine Nullstelle der Parabel durch (0, y0), (1, y1), (2, y2) im Intervall [lo, hi].
+// Voraussetzung: p(lo) und p(hi) haben unterschiedliche Vorzeichen.
+double parabolaRootInInterval(double y0, double y1, double y2, double lo, double hi) {
+    double A, B, C;
+    parabolaCoefficients(y0, y1, y2, A, B, C);
+
+    const double pLo = (A * lo + B) * lo + C;
+    const double pHi = (A * hi + B) * hi + C;
+    // Rückfall: lineare Interpolation zwischen den Intervallgrenzen
+    const double linear = lo + (hi - lo) * pLo / (pLo - pHi);
+
+    if (fabs(A) < 1e-12) {
+        return (fabs(B) < 1e-12) ? linear : -C / B;
+    }
+    const double discriminant = B * B - 4.0 * A * C;
+    if (discriminant < 0.0) {
+        return linear;
+    }
+    // Auslöschungsfreie Form der Lösungsformel
+    const double q = -0.5 * (B + copysign(sqrt(discriminant), B));
+    const double roots[2] = { q / A, (q != 0.0) ? C / q : q / A };
+    for (double r : roots) {
+        if (r >= lo - 1e-9 && r <= hi + 1e-9) {
+            return r;
+        }
+    }
+    return linear;
+}
+
+// Zustand des Mondes zu einem Zeitpunkt, bezogen auf Horizont und Meridian.
+struct MoonSample {
+    double altitude;    // Höhe über der Aufgangshöhe h0 in Radiant (> 0: sichtbar)
+    double hourAngle;   // Stundenwinkel in Radiant, (-π, π]
+};
+
+MoonSample sampleMoon(double jd, double longitude, double latitude) {
+    MoonPosition moon = calculateMoon(jd);
+    RaDek radek = calculateRaDek(moon.longitude, moon.latitude);
+    double siderealTime = calculateSiderealTime(jd) * M_PI / 12.0 + longitude;
+    AzimutHeight azh = calculateHAzFromRaDek(radek, siderealTime, latitude);
+
+    // Aufgangshöhe für die geozentrische Mondposition, Formel aus Kapitel 15 von
+    // "Astronomische Algorithmen, 2. Auflage" von Jean Meeus: h0 = 0.7275*π - 34'
+    // (π = Horizontalparallaxe; berücksichtigt Parallaxe, Halbmesser und Refraktion).
+    double parallax = asin(EARTH_RADIUS / moon.distance);
+    double h0 = 0.7275 * parallax - 0.5667 * DEG2RAD;
+
+    return { azh.height - h0, normalizeAngleDifferenceRad(siderealTime - radek.ra) };
+}
+
+} // namespace
+
+/**
+ * Berechnet Mondauf- und -untergang, Meridiandurchgang und höchsten Stand für den UT-Tag,
+ * der das Julianische Datum enthält.
+ * Die Mondhöhe wird stündlich berechnet; Horizont- und Meridiandurchgänge werden
+ * zwischen den Stützstellen mit einer Parabel durch drei benachbarte Werte bestimmt.
+ * @param jd Julianisches Datum
+ * @param longitude Geographische Länge in Radiant (Ost positiv)
+ * @param latitude Geographische Breite in Radiant
+ * @return Ereignisse in UT-Stunden ab Mitternacht
+ */
+MoonRiseSet calculateMoonRiseSet(double jd, double longitude, double latitude) {
+    constexpr int HOURS = 24;
+
+    const double midnight = round(jd) - 0.5;
+
+    MoonSample samples[HOURS + 1];
+    for (int k = 0; k <= HOURS; k++) {
+        samples[k] = sampleMoon(midnight + k / 24.0, longitude, latitude);
+    }
+
+    MoonRiseSet result = {};
+    result.aboveAtStart = samples[0].altitude > 0.0;
+
+    for (int k = 0; k < HOURS; k++) {
+        // Drei Stützstellen s, s+1, s+2, die das Intervall [k, k+1] enthalten
+        const int s = (k < HOURS - 1) ? k : HOURS - 2;
+        const double lo = k - s;
+        const double hi = lo + 1.0;
+
+        // Horizont: Vorzeichenwechsel der Höhe
+        const double a0 = samples[k].altitude;
+        const double a1 = samples[k + 1].altitude;
+        if ((a0 < 0.0) != (a1 < 0.0)) {
+            double u = parabolaRootInInterval(samples[s].altitude, samples[s + 1].altitude,
+                                              samples[s + 2].altitude, lo, hi);
+            if (a0 < 0.0 && !result.hasRise) {
+                result.hasRise = true;
+                result.riseHours = s + u;
+            } else if (a0 >= 0.0 && !result.hasSet) {
+                result.hasSet = true;
+                result.setHours = s + u;
+            }
+        }
+
+        // Meridian: Stundenwinkel wechselt von negativ nach positiv (nicht der Sprung bei ±π)
+        const double t0 = samples[k].hourAngle;
+        const double t1 = samples[k + 1].hourAngle;
+        if (!result.hasTransit && t0 < 0.0 && t1 >= 0.0 && fabs(t0) < M_PI / 2 && fabs(t1) < M_PI / 2) {
+            // Stundenwinkel relativ zur mittleren Stützstelle stetig fortsetzen
+            const double mid = samples[s + 1].hourAngle;
+            const double w0 = mid + normalizeAngleDifferenceRad(samples[s].hourAngle - mid);
+            const double w2 = mid + normalizeAngleDifferenceRad(samples[s + 2].hourAngle - mid);
+            result.hasTransit = true;
+            result.transitHours = s + parabolaRootInInterval(w0, mid, w2, lo, hi);
+        }
+    }
+
+    // Höchster Stand: größte Stützstelle, im Inneren über den Parabelscheitel verfeinert
+    int m = 0;
+    for (int k = 1; k <= HOURS; k++) {
+        if (samples[k].altitude > samples[m].altitude) m = k;
+    }
+    result.maxAltitude = samples[m].altitude;
+    result.maxAltitudeHours = m;
+    if (m > 0 && m < HOURS) {
+        const double y0 = samples[m - 1].altitude;
+        const double y1 = samples[m].altitude;
+        const double y2 = samples[m + 1].altitude;
+        double A, B, C;
+        parabolaCoefficients(y0, y1, y2, A, B, C);
+        if (A < 0.0) {
+            const double u = -B / (2.0 * A);
+            if (u >= 0.0 && u <= 2.0) {
+                result.maxAltitude = (A * u + B) * u + C;
+                result.maxAltitudeHours = m - 1 + u;
+            }
+        }
+    }
+    return result;
+}
+
 // ---------------------------------------------------------------
 //  Matrix-Operationen
 // ---------------------------------------------------------------
