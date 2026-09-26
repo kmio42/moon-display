@@ -1,5 +1,6 @@
 #include "astro.h"
 #include <cstring>
+#include <utility>
 
 namespace astro {
 
@@ -853,29 +854,37 @@ void parabolaCoefficients(double y0, double y1, double y2, double& A, double& B,
     C = y0;
 }
 
-// Sucht eine Nullstelle der Parabel durch (0, y0), (1, y1), (2, y2) im Intervall [lo, hi].
-// Voraussetzung: p(lo) und p(hi) haben unterschiedliche Vorzeichen.
-double parabolaRootInInterval(double y0, double y1, double y2, double lo, double hi) {
-    double A, B, C;
-    parabolaCoefficients(y0, y1, y2, A, B, C);
+// Reelle Nullstellen der Parabel p(u) = A*u^2 + B*u + C (A != 0), aufsteigend sortiert.
+// Gibt false zurück, wenn es keine reellen Nullstellen gibt.
+bool parabolaRoots(double A, double B, double C, double& r1, double& r2) {
+    const double discriminant = B * B - 4.0 * A * C;
+    if (discriminant < 0.0) {
+        return false;
+    }
+    // Auslöschungsfreie Form der Lösungsformel
+    const double q = -0.5 * (B + copysign(sqrt(discriminant), B));
+    r1 = q / A;
+    r2 = (q != 0.0) ? C / q : r1;
+    if (r1 > r2) std::swap(r1, r2);
+    return true;
+}
 
-    const double pLo = (A * lo + B) * lo + C;
-    const double pHi = (A * hi + B) * hi + C;
+// Sucht eine Nullstelle der Parabel p(u) = A*u^2 + B*u + C im Intervall [0, 1].
+// Voraussetzung: p(0) und p(1) haben unterschiedliche Vorzeichen.
+double parabolaRootInUnitInterval(double A, double B, double C) {
     // Rückfall: lineare Interpolation zwischen den Intervallgrenzen
-    const double linear = lo + (hi - lo) * pLo / (pLo - pHi);
+    const double p1 = A + B + C;
+    const double linear = C / (C - p1);
 
     if (fabs(A) < 1e-12) {
         return (fabs(B) < 1e-12) ? linear : -C / B;
     }
-    const double discriminant = B * B - 4.0 * A * C;
-    if (discriminant < 0.0) {
+    double r1, r2;
+    if (!parabolaRoots(A, B, C, r1, r2)) {
         return linear;
     }
-    // Auslöschungsfreie Form der Lösungsformel
-    const double q = -0.5 * (B + copysign(sqrt(discriminant), B));
-    const double roots[2] = { q / A, (q != 0.0) ? C / q : q / A };
-    for (double r : roots) {
-        if (r >= lo - 1e-9 && r <= hi + 1e-9) {
+    for (double r : { r1, r2 }) {
+        if (r >= -1e-9 && r <= 1.0 + 1e-9) {
             return r;
         }
     }
@@ -908,80 +917,96 @@ MoonSample sampleMoon(double jd, double longitude, double latitude) {
 /**
  * Berechnet Mondauf- und -untergang, Meridiandurchgang und höchsten Stand für den UT-Tag,
  * der das Julianische Datum enthält.
- * Die Mondhöhe wird stündlich berechnet; Horizont- und Meridiandurchgänge werden
- * zwischen den Stützstellen mit einer Parabel durch drei benachbarte Werte bestimmt.
+ * Die Mondhöhe wird stündlich berechnet. Für jedes Stundenintervall [k, k+1] wird eine
+ * Parabel durch die Stützstellen k, k+1, k+2 gelegt, mit der Horizont- und Meridiandurchgänge
+ * sowie der Scheitel innerhalb des Intervalls bestimmt werden.
  * @param jd Julianisches Datum
  * @param longitude Geographische Länge in Radiant (Ost positiv)
  * @param latitude Geographische Breite in Radiant
  * @return Ereignisse in UT-Stunden ab Mitternacht
  */
 MoonRiseSet calculateMoonRiseSet(double jd, double longitude, double latitude) {
-    constexpr int HOURS = 24;
-
     const double midnight = round(jd) - 0.5;
+    auto sampleAt = [&](int hour) {
+        return sampleMoon(midnight + hour / 24.0, longitude, latitude);
+    };
 
-    MoonSample samples[HOURS + 1];
-    for (int k = 0; k <= HOURS; k++) {
-        samples[k] = sampleMoon(midnight + k / 24.0, longitude, latitude);
-    }
+    // Gleitendes Fenster aus drei aufeinanderfolgenden Stunden k, k+1, k+2
+    MoonSample s0 = sampleAt(0);
+    MoonSample s1 = sampleAt(1);
 
     MoonRiseSet result = {};
-    result.aboveAtStart = samples[0].altitude > 0.0;
+    result.aboveAtStart = s0.altitude > 0.0;
+    result.maxAltitude = s0.altitude;
+    result.maxAltitudeHours = 0.0;
 
-    for (int k = 0; k < HOURS; k++) {
-        // Drei Stützstellen s, s+1, s+2, die das Intervall [k, k+1] enthalten
-        const int s = (k < HOURS - 1) ? k : HOURS - 2;
-        const double lo = k - s;
-        const double hi = lo + 1.0;
+    for (int k = 0; k < 24; k++) {
+        const MoonSample s2 = sampleAt(k + 2);
 
-        // Horizont: Vorzeichenwechsel der Höhe
-        const double a0 = samples[k].altitude;
-        const double a1 = samples[k + 1].altitude;
-        if ((a0 < 0.0) != (a1 < 0.0)) {
-            double u = parabolaRootInInterval(samples[s].altitude, samples[s + 1].altitude,
-                                              samples[s + 2].altitude, lo, hi);
-            if (a0 < 0.0 && !result.hasRise) {
+        double A, B, C;
+        parabolaCoefficients(s0.altitude, s1.altitude, s2.altitude, A, B, C);
+
+        // Horizont in [k, k+1]. Die Anzahl der Durchgänge richtet sich nach den Vorzeichen der
+        // Stützstellen, damit Nullstellen an der Intervallgrenze weder doppelt noch gar nicht zählen.
+        const bool belowAtStart = s0.altitude < 0.0;
+        if (belowAtStart != (s1.altitude < 0.0)) {
+            // Vorzeichenwechsel: genau ein Durchgang
+            const double hours = k + parabolaRootInUnitInterval(A, B, C);
+            if (belowAtStart && !result.hasRise) {
                 result.hasRise = true;
-                result.riseHours = s + u;
-            } else if (a0 >= 0.0 && !result.hasSet) {
+                result.riseHours = hours;
+            } else if (!belowAtStart && !result.hasSet) {
                 result.hasSet = true;
-                result.setHours = s + u;
+                result.setHours = hours;
+            }
+        } else if (fabs(A) > 1e-12) {
+            // Gleiches Vorzeichen an beiden Enden: zwei Durchgänge, wenn der Scheitel im Intervall
+            // auf der anderen Seite des Horizonts liegt (Mond streift den Horizont)
+            const double u = -B / (2.0 * A);
+            const double vertex = (A * u + B) * u + C;
+            double r1, r2;
+            if (u > 0.0 && u < 1.0 && (vertex < 0.0) != belowAtStart && parabolaRoots(A, B, C, r1, r2)) {
+                const double riseHours = k + (belowAtStart ? r1 : r2);
+                const double setHours  = k + (belowAtStart ? r2 : r1);
+                if (!result.hasRise) {
+                    result.hasRise = true;
+                    result.riseHours = riseHours;
+                }
+                if (!result.hasSet) {
+                    result.hasSet = true;
+                    result.setHours = setHours;
+                }
             }
         }
 
         // Meridian: Stundenwinkel wechselt von negativ nach positiv (nicht der Sprung bei ±π)
-        const double t0 = samples[k].hourAngle;
-        const double t1 = samples[k + 1].hourAngle;
-        if (!result.hasTransit && t0 < 0.0 && t1 >= 0.0 && fabs(t0) < M_PI / 2 && fabs(t1) < M_PI / 2) {
+        if (!result.hasTransit && s0.hourAngle < 0.0 && s1.hourAngle >= 0.0
+            && fabs(s0.hourAngle) < M_PI / 2 && fabs(s1.hourAngle) < M_PI / 2) {
             // Stundenwinkel relativ zur mittleren Stützstelle stetig fortsetzen
-            const double mid = samples[s + 1].hourAngle;
-            const double w0 = mid + normalizeAngleDifferenceRad(samples[s].hourAngle - mid);
-            const double w2 = mid + normalizeAngleDifferenceRad(samples[s + 2].hourAngle - mid);
+            const double w0 = s1.hourAngle + normalizeAngleDifferenceRad(s0.hourAngle - s1.hourAngle);
+            const double w2 = s1.hourAngle + normalizeAngleDifferenceRad(s2.hourAngle - s1.hourAngle);
+            double tA, tB, tC;
+            parabolaCoefficients(w0, s1.hourAngle, w2, tA, tB, tC);
             result.hasTransit = true;
-            result.transitHours = s + parabolaRootInInterval(w0, mid, w2, lo, hi);
+            result.transitHours = k + parabolaRootInUnitInterval(tA, tB, tC);
         }
-    }
 
-    // Höchster Stand: größte Stützstelle, im Inneren über den Parabelscheitel verfeinert
-    int m = 0;
-    for (int k = 1; k <= HOURS; k++) {
-        if (samples[k].altitude > samples[m].altitude) m = k;
-    }
-    result.maxAltitude = samples[m].altitude;
-    result.maxAltitudeHours = m;
-    if (m > 0 && m < HOURS) {
-        const double y0 = samples[m - 1].altitude;
-        const double y1 = samples[m].altitude;
-        const double y2 = samples[m + 1].altitude;
-        double A, B, C;
-        parabolaCoefficients(y0, y1, y2, A, B, C);
+        // Höchster Stand: Stützstelle k+1 und Parabelscheitel innerhalb des Fensters (und des Tages)
+        if (s1.altitude > result.maxAltitude) {
+            result.maxAltitude = s1.altitude;
+            result.maxAltitudeHours = k + 1;
+        }
         if (A < 0.0) {
             const double u = -B / (2.0 * A);
-            if (u >= 0.0 && u <= 2.0) {
-                result.maxAltitude = (A * u + B) * u + C;
-                result.maxAltitudeHours = m - 1 + u;
+            const double vertex = (A * u + B) * u + C;
+            if (u > 0.0 && u < 2.0 && k + u <= 24.0 && vertex > result.maxAltitude) {
+                result.maxAltitude = vertex;
+                result.maxAltitudeHours = k + u;
             }
         }
+
+        s0 = s1;
+        s1 = s2;
     }
     return result;
 }
