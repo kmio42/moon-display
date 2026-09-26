@@ -180,11 +180,24 @@ void setDashed(ClockData& d, const MoonEvent& e, int today) {
 
 // ── Zeichenzustand ───────────────────────────────────────────────────────────
 
+constexpr time_t MOON_SYMBOL_INTERVAL = 5 * 60;  // Sekunden
+
 bool needsFullRedraw = true;
 int lastDrawnDay = -1;
-int lastDrawnHour = -1;
+ClockData lastDrawnData;
+time_t lastMoonSymbol = 0;
 bool lastMoonUp = false;
 float lastNowHours = -1.0f;
+
+bool sameData(const ClockData& a, const ClockData& b) {
+    return a.hasSunrise == b.hasSunrise && a.sunrise == b.sunrise
+        && a.hasSunset == b.hasSunset && a.sunset == b.sunset
+        && a.hasMoonrise == b.hasMoonrise && a.moonrise == b.moonrise
+        && a.hasMoonset == b.hasMoonset && a.moonset == b.moonset
+        && a.moonUpAllDay == b.moonUpAllDay
+        && a.hasDashed == b.hasDashed && a.dashedIsRise == b.dashedIsRise
+        && a.dashed == b.dashed && a.dashedDayOffset == b.dashedDayOffset;
+}
 
 void drawMoonSymbol(Adafruit_GFX* gfx, time_t now) {
     struct tm utc;
@@ -213,8 +226,21 @@ void drawMoonSymbol(Adafruit_GFX* gfx, time_t now) {
     }
 }
 
-// Alles außer Mondsymbol und Stundenzeiger
-void drawDial(Adafruit_GFX* gfx, const ClockData& d) {
+// Winkelabstand zweier Uhrzeiten in Stunden (0..12)
+float hourDistance(float a, float b) {
+    return fabsf(remainderf(a - b, 24.0f));
+}
+
+// Elemente innerhalb dieses Winkelabstands zum alten Stundenzeiger können von ihm überdeckt worden
+// sein (bei 40 px Abstand zur Mitte sind 0,6 h ≈ 6 px, mehr als die halben Linienbreiten).
+constexpr float NEAR_HOURS = 0.6f;
+
+bool isNear(float hours, float nearHours) {
+    return nearHours < 0.0f || hourDistance(hours, nearHours) < NEAR_HOURS;
+}
+
+// Äußerer Teil: Segment, Ring und Striche. Liegt außerhalb der Reichweite des Stundenzeigers.
+void drawOuterDial(Adafruit_GFX* gfx, const ClockData& d) {
     const float segIn = RING - SEGMENT_WIDTH;
 
     // Mondsegment (Kalendertag)
@@ -250,16 +276,25 @@ void drawDial(Adafruit_GFX* gfx, const ClockData& d) {
         }
     }
 
+}
+
+// Innerer Teil: Tagesgrenze, Ziffern und Zeiger. Mit nearHours >= 0 nur die Elemente in der Nähe
+// dieser Uhrzeit (nach dem Löschen des alten Stundenzeigers), sonst alle.
+void drawInnerDial(Adafruit_GFX* gfx, const ClockData& d, float nearHours) {
     // Tagesgrenze im Grau des Rings bis an den Rand
+    const int16_t midLeft = (int16_t) floorf(CX);  // 119
     const int16_t lineTop = lroundf(CY + HAND_START);
     const int16_t lineBottom = lroundf(CY + RING);
-    gfx->fillRect(midLeft, lineTop, 2, lineBottom - lineTop, COLOR_RING);
+    if (isNear(0.0f, nearHours)) {
+        gfx->fillRect(midLeft, lineTop, 2, lineBottom - lineTop, COLOR_RING);
+    }
 
     // Ziffern
     gfx->setFont(&FreeSansBold9pt7b);
     gfx->setTextSize(1);
     const struct { int hour; const char* text; } digits[] = { { 6, "6" }, { 12, "12" }, { 18, "18" } };
     for (const auto& digit : digits) {
+        if (!isNear(digit.hour, nearHours)) continue;
         float x, y;
         polar(digit.hour, DIGIT_RADIUS, x, y);
         centeredText(gfx, digit.text, x, y, COLOR_MAJOR, false);
@@ -267,12 +302,12 @@ void drawDial(Adafruit_GFX* gfx, const ClockData& d) {
 
     // Sonne und Mond
     const float handEnd = RING - 2.0f;
-    if (d.hasSunrise)  radialLine(gfx, d.sunrise,  HAND_START, handEnd, 3.0f, COLOR_SUN);
-    if (d.hasSunset)   radialLine(gfx, d.sunset,   HAND_START, handEnd, 3.0f, COLOR_SUN);
-    if (d.hasMoonrise) radialLine(gfx, d.moonrise, HAND_START, handEnd, 3.0f, COLOR_MOON);
-    if (d.hasMoonset)  radialLine(gfx, d.moonset,  HAND_START, handEnd, 3.0f, COLOR_MOON);
+    if (d.hasSunrise  && isNear(d.sunrise,  nearHours)) radialLine(gfx, d.sunrise,  HAND_START, handEnd, 3.0f, COLOR_SUN);
+    if (d.hasSunset   && isNear(d.sunset,   nearHours)) radialLine(gfx, d.sunset,   HAND_START, handEnd, 3.0f, COLOR_SUN);
+    if (d.hasMoonrise && isNear(d.moonrise, nearHours)) radialLine(gfx, d.moonrise, HAND_START, handEnd, 3.0f, COLOR_MOON);
+    if (d.hasMoonset  && isNear(d.moonset,  nearHours)) radialLine(gfx, d.moonset,  HAND_START, handEnd, 3.0f, COLOR_MOON);
 
-    if (d.hasDashed) {
+    if (d.hasDashed && isNear(d.dashed, nearHours)) {
         dashedRadialLine(gfx, d.dashed, HAND_START, handEnd, 2.0f, COLOR_MOON);
         gfx->setFont(nullptr);
         float x, y;
@@ -334,23 +369,34 @@ ClockData computeClockData(time_t now) {
 void drawClockFace(Adafruit_GFX* gfx, time_t now) {
     const ClockData d = computeClockData(now);
     const float nowHours = localHours(now);
-    const int hour = (int) nowHours;
     const bool moonUp = moonAboveHorizon(now);
 
-    if (needsFullRedraw || cache.day != lastDrawnDay || hour != lastDrawnHour || moonUp != lastMoonUp) {
-        // Komplett neu: stündlich wegen des Mondsymbols (Phase) und sobald der Mond den Horizont
-        // kreuzt (bläuliche Tönung unter dem Horizont)
+    if (needsFullRedraw || cache.day != lastDrawnDay || !sameData(d, lastDrawnData)) {
+        // Komplett neu: beim ersten Mal, bei Tageswechsel und wenn sich Zeiger oder Segment ändern
+        // (z. B. wechselt die gestrichelte Linie nach einem Mondauf- oder -untergang)
         gfx->fillScreen(COLOR_BLACK);
         drawMoonSymbol(gfx, now);
+        drawOuterDial(gfx, d);
+        drawInnerDial(gfx, d, -1.0f);
         needsFullRedraw = false;
         lastDrawnDay = cache.day;
-        lastDrawnHour = hour;
+        lastDrawnData = d;
+        lastMoonSymbol = now;
         lastMoonUp = moonUp;
-    } else if (lastNowHours >= 0.0f) {
-        // Nur den alten Stundenzeiger löschen; das Zifferblatt wird darüber neu gezeichnet
-        drawNowHand(gfx, lastNowHours, COLOR_BLACK);
+    } else {
+        // Mondsymbol zu jeder vollen 5-Minuten-Marke und beim Horizontdurchgang (bläuliche Tönung)
+        // an Ort und Stelle übermalen; es überschneidet sich mit keinem anderen Element
+        if (now / MOON_SYMBOL_INTERVAL != lastMoonSymbol / MOON_SYMBOL_INTERVAL || moonUp != lastMoonUp) {
+            drawMoonSymbol(gfx, now);
+            lastMoonSymbol = now;
+            lastMoonUp = moonUp;
+        }
+        // Alten Stundenzeiger löschen und nur die Elemente nachzeichnen, die er überdeckt haben kann
+        if (lastNowHours >= 0.0f && lastNowHours != nowHours) {
+            drawNowHand(gfx, lastNowHours, COLOR_BLACK);
+            drawInnerDial(gfx, d, lastNowHours);
+        }
     }
-    drawDial(gfx, d);
     drawNowHand(gfx, nowHours, COLOR_NOW);
     lastNowHours = nowHours;
 }
