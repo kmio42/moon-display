@@ -122,34 +122,35 @@ String buildDailyReport() {
     msg += "\n\n";
 
     if (today.sunValid) {
-        msg += "🌅 Sonnenaufgang: ";
-        msg += today.hasSunrise ? formatLocalTime(today.sunrise) : String("keiner");
-        msg += "\n🌇 Sonnenuntergang: ";
-        msg += today.hasSunset ? formatLocalTime(today.sunset) : String("keiner");
+        msg += "☼\uFE0E↑ ";
+        msg += today.hasSunrise ? formatLocalTime(today.sunrise) : String("-");
+        msg += "\u2003☼\uFE0E↓ ";
+        msg += today.hasSunset ? formatLocalTime(today.sunset) : String("-");
         if (today.hasSunset && yesterday.hasSunset) {
             // Astronomische Differenz, unabhängig von einer Sommerzeitumstellung
             long sec = (long) (today.sunset - yesterday.sunset) - 86400L;
             long absSec = labs(sec);
-            if (absSec >= 60) {
-                snprintf(buf, sizeof(buf), " (%s%ld min %ld s ggü. gestern)", sec < 0 ? "−" : "+", absSec / 60, absSec % 60);
-            } else {
-                snprintf(buf, sizeof(buf), " (%s%ld s ggü. gestern)", sec < 0 ? "−" : "+", absSec);
-            }
+            snprintf(buf, sizeof(buf), " (%s%ld'%ld'')", sec < 0 ? "−" : "+", absSec / 60, absSec % 60);
             msg += buf;
         }
         msg += "\n";
     } else {
-        msg += "☀️ Kein Sonnenauf-/-untergang (Polartag oder Polarnacht)\n";
+        msg += "☀\n";
     }
 
-    msg += "🌙 Mondaufgang: ";
-    msg += today.hasMoonrise ? formatLocalTime(today.moonrise) : String("keiner");
-    msg += " · Monduntergang: ";
-    msg += today.hasMoonset ? formatLocalTime(today.moonset) : String("keiner");
+    // Mondauf-/untergang in zeitlicher Reihenfolge, fehlende Ereignisse weglassen
+    String rise = today.hasMoonrise ? "☽↑ " + formatLocalTime(today.moonrise) : String();
+    String set  = today.hasMoonset  ? "☽↓ " + formatLocalTime(today.moonset)  : String();
+    bool setFirst = today.hasMoonrise && today.hasMoonset && today.moonset < today.moonrise;
+    String first  = setFirst ? set : rise;
+    String second = setFirst ? rise : set;
+    msg += first;
+    if (first.length() && second.length()) msg += "\u2003";
+    msg += second;
+    if (!first.length() && !second.length()) msg += "☽-";
     msg += "\n";
-
-    snprintf(buf, sizeof(buf), "%s %s, %.0f %% beleuchtet",
-             moonPhaseEmoji(sky.phase, sky.waxing), moonPhaseName(sky.phase, sky.waxing), sky.phase * 100.0);
+    snprintf(buf, sizeof(buf), "%s %.0f%% (%s)",
+             moonPhaseEmoji(sky.phase, sky.waxing), sky.phase * 100.0, sky.waxing ? "⬈" : "⬊");
     msg += buf;
     return msg;
 }
