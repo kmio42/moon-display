@@ -12,6 +12,8 @@
 
 #include "astro.h"
 #include "ephemeris.h"
+#include "moon_render.h"
+#include "png_stream.h"
 #include "credentials.h"
 
 #ifndef TELEGRAM_BOT_TOKEN
@@ -203,6 +205,7 @@ static String buildConfigMessage() {
 static const char HELP_TEXT[] =
     "🌙 Mond-Display\n\n"
     "/mond – aktuelle Mondkoordinaten\n"
+    "/bild – aktuelles Mondbild\n"
     "/sonne – aktuelle Sonnenkoordinaten\n"
     "/bericht – Tagesbericht jetzt senden\n"
     "/config – aktuelle Einstellungen\n"
@@ -215,6 +218,7 @@ static const char HELP_TEXT[] =
 static const char BOT_COMMANDS[] =
     "["
     "{\"command\":\"mond\",\"description\":\"Aktuelle Mondkoordinaten\"},"
+    "{\"command\":\"bild\",\"description\":\"Aktuelles Mondbild\"},"
     "{\"command\":\"sonne\",\"description\":\"Aktuelle Sonnenkoordinaten\"},"
     "{\"command\":\"bericht\",\"description\":\"Tagesbericht jetzt senden\"},"
     "{\"command\":\"config\",\"description\":\"Aktuelle Einstellungen\"},"
@@ -225,6 +229,65 @@ static const char BOT_COMMANDS[] =
     "{\"command\":\"zeitzone\",\"description\":\"Zeitzone (POSIX-TZ) setzen\"},"
     "{\"command\":\"hilfe\",\"description\":\"Befehlsübersicht\"}"
     "]";
+
+// ── Mondbild ─────────────────────────────────────────────────────────────────
+
+// Aktuelles Datenstück des PNG-Streams. Es wird schon in photoMoreData() geholt, weil die
+// Library photoBuffer() und photoBufferLen() als Argumente desselben Aufrufs auswertet
+// (Reihenfolge nicht festgelegt).
+static const uint8_t* photoPiece = nullptr;
+static size_t photoPieceLen = 0;
+
+static bool photoMoreData() {
+    if (!pngStreamMore()) return false;
+    photoPiece = pngStreamNext(photoPieceLen);
+    return true;
+}
+
+static byte* photoBuffer() {
+    return (byte*) photoPiece;
+}
+
+static int photoBufferLen() {
+    return (int) photoPieceLen;
+}
+
+static uint16_t photoPixel(int x, int y) {
+    return moonPixel(x - MOON_RADIUS_PX, y - MOON_RADIUS_PX);
+}
+
+// Rendert den Mond für die aktuelle Zeit und sendet ihn als PNG.
+// Das Bild wird zeilenweise während des Uploads berechnet (kein Bildpuffer nötig).
+static void sendMoonPhoto(const String& chatId) {
+    struct tm utc;
+    if (!currentUtc(utc)) {
+        bot.sendMessage(chatId, "Keine gültige Uhrzeit (NTP) verfügbar.", "");
+        return;
+    }
+    SkyState sky = computeSky(utc);
+
+    const unsigned long start = millis();
+    prepareMoonRenderAt(utc);
+    pngStreamBegin(2 * MOON_RADIUS_PX, 2 * MOON_RADIUS_PX, photoPixel);
+
+    // Telegram braucht für das Verarbeiten des Bildes länger als die Standard-Wartezeit
+    const unsigned int wait = bot.waitForResponse;
+    bot.waitForResponse = 15000;
+    String response = bot.sendPhotoByBinary(chatId, "image/png", pngStreamSize(),
+                                            photoMoreData, nullptr, photoBuffer, photoBufferLen);
+    bot.waitForResponse = wait;
+    Serial.printf("Telegram: Bild (%u Byte) in %lu ms gesendet.\n", (unsigned) pngStreamSize(), millis() - start);
+
+    if (response.indexOf("\"ok\":true") < 0) {
+        Serial.println("Telegram: Antwort auf Bild: " + response);
+        bot.sendMessage(chatId, "Das Bild konnte nicht gesendet werden.", "");
+        return;
+    }
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%s %s, %.0f %% beleuchtet – ",
+             moonPhaseEmoji(sky.phase, sky.waxing), moonPhaseName(sky.phase, sky.waxing), sky.phase * 100.0);
+    bot.sendMessage(chatId, String(buf) + formatNow(), "");
+}
 
 // ── Auto-Modus ───────────────────────────────────────────────────────────────
 
@@ -266,7 +329,7 @@ static void checkAutoReport() {
 
 // ── Befehle ──────────────────────────────────────────────────────────────────
 
-static String handleCommand(String text) {
+static String handleCommand(String text, const String& chatId) {
     text.trim();
     int space = text.indexOf(' ');
     String cmd  = (space < 0) ? text : text.substring(0, space);
@@ -282,6 +345,10 @@ static String handleCommand(String text) {
     }
     if (cmd == "/mond") {
         return buildMoonMessage();
+    }
+    if (cmd == "/bild") {
+        sendMoonPhoto(chatId);
+        return "";  // Antwort wurde bereits gesendet
     }
     if (cmd == "/sonne") {
         return buildSunMessage();
@@ -395,7 +462,10 @@ void handleTelegram() {
                 continue;
             }
             Serial.printf("Telegram: %s\n", message.text.c_str());
-            bot.sendMessage(message.chat_id, handleCommand(message.text), "");
+            String reply = handleCommand(message.text, message.chat_id);
+            if (reply.length() > 0) {
+                bot.sendMessage(message.chat_id, reply, "");
+            }
         }
         count = bot.getUpdates(bot.last_message_received + 1);
     }

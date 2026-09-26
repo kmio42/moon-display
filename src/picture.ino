@@ -1,5 +1,9 @@
 #include <Arduino.h>
 
+// extern: Die Texturen werden auch aus moon_render.cpp verwendet (const hätte sonst interne Bindung).
+extern const uint16_t FullMoon[];
+extern const uint16_t lroc[];
+
 // This file contains the bitmap data for the full moon image. The data is stored in program memory (PROGMEM) to save RAM space on the microcontroller. Each value in the array represents a pixel color in a 16-bit format (RGB565). The array size is 115200, which corresponds to a 240x320 pixel image (240 * 320 = 76800 pixels, and each pixel is represented by 2 bytes).
 // Picture of moon: Darmstadt, 13.05.2025 00:06:51 MESZ
 

@@ -46,6 +46,7 @@ The bot only answers messages from this chat ID. Leave the token empty to disabl
 | Command | Description |
 |---|---|
 | `/mond` | Current moon coordinates: RA/Dec, azimuth/altitude, distance, phase, libration |
+| `/bild` | Current moon image as shown on the display (PNG) |
 | `/sonne` | Current sun coordinates: RA/Dec, azimuth/altitude |
 | `/bericht` | Send the daily report now |
 | `/config` | Show current configuration |
