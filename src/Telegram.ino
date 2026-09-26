@@ -67,6 +67,15 @@ static String formatLocalTime(time_t t) {
     return buf;
 }
 
+// Formatiert eine UTC-Zeit als lokales Datum "TT.MM.".
+static String formatLocalDate(time_t t) {
+    struct tm lt;
+    utcToLocal(t, lt);
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%02d.%02d.", lt.tm_mday, lt.tm_mon + 1);
+    return buf;
+}
+
 static String formatDeg(double rad) {
     char buf[16];
     snprintf(buf, sizeof(buf), "%+.2f°", rad * astro::RAD2DEG);
@@ -153,9 +162,31 @@ String buildDailyReport() {
     msg += second;
     if (!first.length() && !second.length()) msg += "☽-";
     msg += "\n";
-    snprintf(buf, sizeof(buf), "%s %.0f%% (%s)",
-             moonPhaseEmoji(sky.phase, sky.waxing), sky.phase * 100.0, sky.waxing ? "⬈" : "⬊");
+    // Phase, Kulminationshöhe als Balken und deren Tendenz
+    static const char* const HEIGHT_BARS[] = {"▁", "▂", "▃", "▅", "▇"};
+    MoonOutlook outlook = moonOutlookFor(now);
+    snprintf(buf, sizeof(buf), "%s %.0f%% (%s) %s%s",
+             moonPhaseEmoji(sky.phase, sky.waxing), sky.phase * 100.0, sky.waxing ? "⬈" : "⬊",
+             HEIGHT_BARS[outlook.heightLevel], outlook.heightRising ? "⇡" : "⇣");
     msg += buf;
+
+    // Finsternisse und Super-/Minimond der nächsten 14 Tage
+    String events;
+    if (outlook.lunarEclipse) {
+        events += String(" 🌕🔴") + (outlook.lunarEclipseVisible ? "" : "✗") + " " + formatLocalDate(outlook.fullMoon);
+    }
+    if (outlook.solarEclipse) {
+        events += " ☀🌑 " + formatLocalDate(outlook.newMoon);
+    }
+    if (outlook.superMoon) {
+        events += " 🌕＋ " + formatLocalDate(outlook.fullMoon);
+    }
+    if (outlook.miniMoon) {
+        events += " 🌕－ " + formatLocalDate(outlook.fullMoon);
+    }
+    if (events.length()) {
+        msg += "\n" + events.substring(1);
+    }
     return msg;
 }
 
@@ -225,7 +256,9 @@ static const char HELP_TEXT[] =
     "/auto on|off – täglichen Bericht ein/aus\n"
     "/autozeit HH:MM – Uhrzeit des Berichts (Lokalzeit)\n"
     "/zeitzone <POSIX-TZ> – z. B. CET-1CEST,M3.5.0,M10.5.0/3\n"
-    "/modus mond|uhr – Anzeige: Mond oder 24h-Uhr";
+    "/modus mond|uhr – Anzeige: Mond oder 24h-Uhr\n\n"
+    "Bericht: ▁…▇ Höchststand des Mondes, ⇡⇣ morgen höher/tiefer, "
+    "🌕🔴 Mondfinsternis (✗ hier nicht sichtbar), ☀🌑 Sonnenfinsternis, 🌕＋/🌕－ Super-/Minimond";
 
 static const char BOT_COMMANDS[] =
     "["

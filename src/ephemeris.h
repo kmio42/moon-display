@@ -30,11 +30,25 @@ struct DayEvents {
     time_t sunrise, sunset, moonrise, moonset;
 };
 
+// Ausblick für den Tagesbericht: Mondhöhe und Ereignisse der nächsten 14 Tage.
+struct MoonOutlook {
+    int  heightLevel;       // Kulminationshöhe heute, 0 (sehr tief) .. 4 (sehr hoch)
+    bool heightRising;      // Morgen höher als heute
+    // Nächster Voll-/Neumond ab Beginn des lokalen Tags innerhalb von 14 Tagen (UTC)
+    bool hasFullMoon, hasNewMoon;
+    time_t fullMoon, newMoon;
+    bool lunarEclipse;      // Kernschatten-Mondfinsternis beim Vollmond
+    bool lunarEclipseVisible; // Mond zur Finsternismitte über dem Horizont
+    bool solarEclipse;      // Sonnenfinsternis beim Neumond (irgendwo auf der Erde)
+    bool superMoon, miniMoon;
+};
+
 double julianDateFromTm(const struct tm& utc);
 time_t timeFromJulianDate(double jd);
 SkyState computeSky(const struct tm& utc);
 int localDayKey(const struct tm& t);
 DayEvents eventsForLocalDay(time_t t, bool withMoon);
+MoonOutlook moonOutlookFor(time_t t);
 const char* moonPhaseName(double phase, bool waxing);
 const char* moonPhaseEmoji(double phase, bool waxing);
 
