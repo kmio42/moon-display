@@ -165,7 +165,7 @@ String buildDailyReport() {
     // Phase, Kulminationshöhe als Balken und deren Tendenz
     static const char* const HEIGHT_BARS[] = {"▁", "▂", "▃", "▅", "▇"};
     MoonOutlook outlook = moonOutlookFor(now);
-    snprintf(buf, sizeof(buf), "%s %.0f%% (%s) %s%s",
+    snprintf(buf, sizeof(buf), "%s %.0f%% (%s)\u2003%s%s",
              moonPhaseEmoji(sky.phase, sky.waxing), sky.phase * 100.0, sky.waxing ? "⬈" : "⬊",
              HEIGHT_BARS[outlook.heightLevel], outlook.heightRising ? "⇡" : "⇣");
     msg += buf;
