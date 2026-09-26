@@ -14,6 +14,7 @@ An internet connection is only needed as a time source — all astronomical calc
 * Texture options: high-resolution texture from NASA's CGI Moon Kit or self-taken photograph
 * Optional dimming of the unilluminated lunar side
 * Optional bluish tint when the moon is below the horizon
+* Second display mode: 24-hour clock with sunrise/sunset, moonrise/moonset and the time the moon is above the horizon
 * Telegram bot for changing settings, querying current sun/moon coordinates and an optional daily report
 * Serial interface (115200 baud) for settings and debug output: Julian date, RA/Dec, azimuth/altitude, libration, phase, parallactic angle, sidereal time, rotation, mask, sunrise/sunset times
 
@@ -55,6 +56,7 @@ The bot only answers messages from this chat ID. Leave the token empty to disabl
 | `/auto on\|off` | Enable or disable the daily report (auto mode) |
 | `/autozeit HH:MM` | Time of the daily report (local time) |
 | `/zeitzone <POSIX-TZ>` | Time zone used for all displayed times |
+| `/modus mond\|uhr` | Display mode: live moon or 24-hour clock |
 
 **Auto mode:** once a day at the configured time the bot sends a report with sunrise and sunset, the change of sunset time compared to the previous day, moonrise and moonset, and the current moon phase. Sunrise/sunset are calculated with Meeus' method, moonrise/moonset by hourly sampling of the moon's altitude with quadratic (Lagrange) interpolation of the horizon crossing, using the horizon altitude after Meeus. All calculations are done in UT; the report covers the local calendar day (events of the UT days overlapping it are converted to local time and filtered by local date).
 
@@ -77,6 +79,7 @@ All runtime settings are stored in flash (NVS) and survive reboots. Connect at *
 | `moon_run` | Start live display (updates every minute) |
 | `set_time DD.MM.YYYY HH:MM:SS` | Set system time manually (UTC) |
 | `wifi [on\|off]` | Enable or disable Wi-Fi |
+| `mode moon\|clock` | Display mode: live moon or 24-hour clock (persistent) |
 | `set_auto on\|off` | Enable or disable the daily Telegram report |
 | `set_autotime HH:MM` | Time of the daily Telegram report (local time) |
 | `set_timezone <POSIX-TZ>` | Time zone for displayed times (default `CET-1CEST,M3.5.0,M10.5.0/3`) |
@@ -91,6 +94,18 @@ All runtime settings are stored in flash (NVS) and survive reboots. Connect at *
 | 3 | 8 | Apply libration |
 
 Example: `set_options 9` enables earthshine + libration.
+
+## Display modes
+
+**Moon** (default): real-time rendering of the moon, updated every minute.
+
+**24-hour clock**: midnight at the bottom, 6 am on the left, noon at the top, 6 pm on the right. All times refer to the current local calendar day.
+* Light yellow hands: sunrise and sunset
+* Light blue hands: moonrise and moonset; the light blue segment at the rim shows when the moon is above the horizon
+* Dashed light blue hand with `+1`/`-1`: the next event of the current or upcoming moon passage that falls on the next or previous day (at most one)
+* Red hand: current time
+* Grey line at the bottom: day boundary (midnight)
+* Centre: current moon, rendered like the moon display
 
 ## Hardware
 * ESP32C3 Super mini

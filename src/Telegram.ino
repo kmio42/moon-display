@@ -14,6 +14,7 @@
 #include "ephemeris.h"
 #include "moon_render.h"
 #include "png_stream.h"
+#include "display_mode.h"
 #include "credentials.h"
 
 #ifndef TELEGRAM_BOT_TOKEN
@@ -36,7 +37,10 @@ extern bool   isValidTimezone(const char* tz);
 extern int    parseHHMM(const char* s);
 
 // Display neu zeichnen (definiert in MondPhase.ino)
-extern void requestMoonRedraw();
+extern void requestRedraw();
+extern void setDisplayMode(int displayMode);
+extern const char* displayModeName();
+extern int configDisplayMode;
 
 constexpr unsigned long TELEGRAM_POLL_INTERVAL = 3000;  // ms
 constexpr time_t        MIN_VALID_TIME         = 1700000000; // Zeit gilt erst nach NTP-Sync als gültig
@@ -198,6 +202,7 @@ static String buildConfigMessage() {
              configAutoMode ? "an" : "aus", configAutoTime / 60, configAutoTime % 60);
     msg += buf;
     msg += "Zeitzone: " + configTimezone + "\n";
+    msg += String("Anzeige: ") + displayModeName() + "\n";
     msg += "Lokalzeit: " + formatNow();
     return msg;
 }
@@ -213,7 +218,8 @@ static const char HELP_TEXT[] =
     "/optionen <wert> – Darstellung (Bits: 1=abdunkeln, 2=bläulich, 4=NASA-Textur, 8=Libration)\n"
     "/auto on|off – täglichen Bericht ein/aus\n"
     "/autozeit HH:MM – Uhrzeit des Berichts (Lokalzeit)\n"
-    "/zeitzone <POSIX-TZ> – z. B. CET-1CEST,M3.5.0,M10.5.0/3";
+    "/zeitzone <POSIX-TZ> – z. B. CET-1CEST,M3.5.0,M10.5.0/3\n"
+    "/modus mond|uhr – Anzeige: Mond oder 24h-Uhr";
 
 static const char BOT_COMMANDS[] =
     "["
@@ -227,6 +233,7 @@ static const char BOT_COMMANDS[] =
     "{\"command\":\"auto\",\"description\":\"Täglichen Bericht ein/aus: on|off\"},"
     "{\"command\":\"autozeit\",\"description\":\"Uhrzeit des Berichts: HH:MM\"},"
     "{\"command\":\"zeitzone\",\"description\":\"Zeitzone (POSIX-TZ) setzen\"},"
+    "{\"command\":\"modus\",\"description\":\"Anzeige: mond|uhr\"},"
     "{\"command\":\"hilfe\",\"description\":\"Befehlsübersicht\"}"
     "]";
 
@@ -371,7 +378,7 @@ static String handleCommand(String text, const String& chatId) {
         configLatitude  = lat;
         configLongitude = lon;
         saveConfig();
-        requestMoonRedraw();
+        requestRedraw();
         char buf[64];
         snprintf(buf, sizeof(buf), "Standort gespeichert: %.6f / %.6f", configLatitude, configLongitude);
         return buf;
@@ -385,7 +392,7 @@ static String handleCommand(String text, const String& chatId) {
         }
         configDisplayOptions = (int) value;
         saveConfig();
-        requestMoonRedraw();
+        requestRedraw();
         return "Display-Optionen gespeichert: " + String(configDisplayOptions);
     }
     if (cmd == "/auto") {
@@ -416,6 +423,17 @@ static String handleCommand(String text, const String& chatId) {
         snprintf(buf, sizeof(buf), "Berichtszeit gespeichert: %02d:%02d", configAutoTime / 60, configAutoTime % 60);
         return buf;
     }
+    if (cmd == "/modus") {
+        args.toLowerCase();
+        if (args == "mond") {
+            setDisplayMode(DISPLAY_MODE_MOON);
+        } else if (args == "uhr") {
+            setDisplayMode(DISPLAY_MODE_CLOCK);
+        } else {
+            return String("Anzeige: ") + displayModeName() + ". Erwartet: /modus mond|uhr";
+        }
+        return String("Anzeige: ") + displayModeName();
+    }
     if (cmd == "/zeitzone") {
         if (args.length() == 0) {
             return "Zeitzone: " + configTimezone + "\nErwartet: /zeitzone <POSIX-TZ>, z. B. CET-1CEST,M3.5.0,M10.5.0/3";
@@ -426,6 +444,7 @@ static String handleCommand(String text, const String& chatId) {
         configTimezone = args;
         saveConfig();
         resetAutoReportDay();
+        requestRedraw();
         return "Zeitzone gespeichert: " + configTimezone + "\nLokalzeit: " + formatNow();
     }
     return "Unbekannter Befehl. /hilfe zeigt alle Befehle.";

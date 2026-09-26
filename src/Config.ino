@@ -2,6 +2,8 @@
 #include <Preferences.h>
 #include <time.h>
 
+#include "display_mode.h"
+
 // Persistente Konfiguration (RAM-Kopie der NVS-Werte).
 // Defaults werden verwendet, wenn noch nichts im Flash gespeichert wurde.
 double configLatitude       = 51.0;
@@ -11,6 +13,8 @@ int    configDisplayOptions = 9;
 // Telegram Auto-Modus: täglicher Bericht zur Uhrzeit configAutoTime (Minuten nach Mitternacht, Lokalzeit)
 bool   configAutoMode       = false;
 int    configAutoTime       = 7 * 60;
+// Anzeigemodus (display_mode.h)
+int    configDisplayMode    = DISPLAY_MODE_MOON;
 // Zeitzone als POSIX-TZ-String, wird nur für die Ausgabe verwendet (System läuft in UTC)
 String configTimezone       = "CET-1CEST,M3.5.0,M10.5.0/3";
 
@@ -25,6 +29,7 @@ void loadConfig() {
     configAutoMode       = prefs.getBool  ("auto",  configAutoMode);
     configAutoTime       = prefs.getInt   ("atime", configAutoTime);
     configTimezone       = prefs.getString("tz",    configTimezone);
+    configDisplayMode    = prefs.getInt   ("mode",  configDisplayMode);
     prefs.end();
 }
 
@@ -36,6 +41,7 @@ void saveConfig() {
     prefs.putBool  ("auto",  configAutoMode);
     prefs.putInt   ("atime", configAutoTime);
     prefs.putString("tz",    configTimezone);
+    prefs.putInt   ("mode",  configDisplayMode);
     prefs.end();
 }
 

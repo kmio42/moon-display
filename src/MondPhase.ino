@@ -20,6 +20,8 @@
 // ── Konfiguration ────────────────────────────────────────────────────────────
 
 #include "credentials.h"
+#include "clock_face.h"
+#include "display_mode.h"
 
 WiFiMulti wifiMulti;
 
@@ -38,6 +40,7 @@ extern int    configDisplayOptions;
 extern bool   configAutoMode;
 extern int    configAutoTime;
 extern String configTimezone;
+extern int    configDisplayMode;
 extern void   loadConfig();
 extern void   saveConfig();
 extern bool   isValidTimezone(const char* tz);
@@ -130,9 +133,24 @@ SerialCommand cmd_moon_("moon", cmd_moon);
 void cmd_moon_run_(SerialCommands* sender)
 {
     sender->GetSerial()->println("Starting dynamic moon display...");
-    currentMode = MODE_MOON;
+    setDisplayMode(DISPLAY_MODE_MOON);
 }
 SerialCommand cmd_moon_run("moon_run", cmd_moon_run_);
+
+void cmd_mode_(SerialCommands* sender)
+{
+    const char* arg0 = sender->Next();
+    if (arg0 != nullptr && strcmp(arg0, "moon") == 0) {
+        setDisplayMode(DISPLAY_MODE_MOON);
+    } else if (arg0 != nullptr && strcmp(arg0, "clock") == 0) {
+        setDisplayMode(DISPLAY_MODE_CLOCK);
+    } else {
+        sender->GetSerial()->println("Ungültiges Argument. Erwartet: mode moon|clock");
+        return;
+    }
+    sender->GetSerial()->printf("Anzeigemodus gespeichert: %s\n", displayModeName());
+}
+SerialCommand cmd_mode("mode", cmd_mode_);
 
 void cmd_set_time_(SerialCommands* sender)
 {
@@ -201,6 +219,7 @@ void cmd_set_location_(SerialCommands* sender)
     configLatitude  = lat;
     configLongitude = lon;
     saveConfig();
+    requestRedraw();
     sender->GetSerial()->printf("Standort gespeichert: %.6f / %.6f\n", configLatitude, configLongitude);
 }
 SerialCommand cmd_set_location("set_location", cmd_set_location_);
@@ -220,6 +239,7 @@ void cmd_set_options_(SerialCommands* sender)
     }
     configDisplayOptions = (int) value;
     saveConfig();
+    requestRedraw();
     sender->GetSerial()->printf("Display-Optionen gespeichert: %d\n", configDisplayOptions);
 }
 SerialCommand cmd_set_options("set_options", cmd_set_options_);
@@ -266,6 +286,7 @@ void cmd_set_timezone_(SerialCommands* sender)
     configTimezone = arg0;
     saveConfig();
     resetAutoReportDay();
+    requestRedraw();
     sender->GetSerial()->printf("Zeitzone gespeichert: %s\n", configTimezone.c_str());
 }
 SerialCommand cmd_set_timezone("set_timezone", cmd_set_timezone_);
@@ -282,6 +303,7 @@ void cmd_config_(SerialCommands* sender)
     sender->GetSerial()->printf("    [%c] use_libration   (8)\n",   (configDisplayOptions & 8) ? 'x' : ' ');
     sender->GetSerial()->printf("  Auto-Modus: %s, täglich um %02d:%02d\n", configAutoMode ? "an" : "aus", configAutoTime / 60, configAutoTime % 60);
     sender->GetSerial()->printf("  Zeitzone:  %s\n", configTimezone.c_str());
+    sender->GetSerial()->printf("  Anzeige:   %s\n", displayModeName());
 }
 SerialCommand cmd_config("config", cmd_config_);
 
@@ -291,6 +313,7 @@ void cmd_help(SerialCommands* sender)
   sender->GetSerial()->println("  help - Show this help message");
   sender->GetSerial()->println("  moon [HH:MM:SS | DD.MM.YYYY HH:MM:SS] - Display moon phase for given time (or current time if no argument)");
   sender->GetSerial()->println("  moon_run - Start dynamic moon display (updates every minute)");
+  sender->GetSerial()->println("  mode moon|clock - Anzeigemodus: Mond oder 24h-Uhr (persistent)");
   sender->GetSerial()->println("  wifi [on|off] - Turn WiFi on or off");
   sender->GetSerial()->println("  set_time TT.MM.JJJJ HH:MM:SS - Set system time (UTC)");
   sender->GetSerial()->println("  set_location <lat> <lon> - Standort persistent speichern (Dezimalgrad)");
@@ -307,6 +330,7 @@ void setupSerialCommands() {
     serial_commands_.AddCommand(&cmd_help_);
     serial_commands_.AddCommand(&cmd_moon_);
     serial_commands_.AddCommand(&cmd_moon_run);
+    serial_commands_.AddCommand(&cmd_mode);
     serial_commands_.AddCommand(&cmd_set_time);
     serial_commands_.AddCommand(&cmd_wifi);
     serial_commands_.AddCommand(&cmd_set_location);
@@ -341,15 +365,32 @@ void setup() {
     setupSerialCommands();
 
     setupTelegram();
+
+    requestRedraw();
 }
 
 unsigned long lastMoonCalc = 60000; // Erzwinge Berechnung direkt nach Start, da loop() erst nach 60s aktualisiert
 unsigned long lastWifiCheck = 0;
 
-// Erzwingt ein Neuzeichnen des Live-Mondes im nächsten loop()-Durchlauf.
-void requestMoonRedraw() {
-    currentMode = MODE_MOON;
+long lastClockMinute = -1;
+
+// Erzwingt ein Neuzeichnen im konfigurierten Anzeigemodus im nächsten loop()-Durchlauf.
+void requestRedraw() {
+    currentMode = (configDisplayMode == DISPLAY_MODE_CLOCK) ? MODE_CLOCK : MODE_MOON;
     lastMoonCalc = millis() - 60001;
+    lastClockMinute = -1;
+    clockFaceInvalidate();
+}
+
+// Setzt den Anzeigemodus, speichert ihn und zeichnet neu.
+void setDisplayMode(int displayMode) {
+    configDisplayMode = displayMode;
+    saveConfig();
+    requestRedraw();
+}
+
+const char* displayModeName() {
+    return (configDisplayMode == DISPLAY_MODE_CLOCK) ? "Uhr" : "Mond";
 }
 
 void loop() {
@@ -369,7 +410,14 @@ void loop() {
     } else if (currentMode == MODE_DISPLAY) {
         // Hier könnte z.B. ein Wechsel zwischen verschiedenen Anzeigemodi implementiert werden
     } else if (currentMode == MODE_CLOCK) {
-        // Hier könnte z.B. eine Uhrzeit-Anzeige implementiert werden
+        // 24h-Uhr: einmal pro Minute aktualisieren
+        time_t now = time(nullptr);
+        if (now > 1700000000 && now / 60 != lastClockMinute) {
+            unsigned long start = millis();
+            drawClockFace(&tft, now);
+            lastClockMinute = now / 60;
+            Serial.printf("Uhr aktualisiert (%lu ms)\n", millis() - start);
+        }
     }
     delay(100);
     //berechneSonnenaufgang();
