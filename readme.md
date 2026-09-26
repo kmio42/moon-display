@@ -16,6 +16,7 @@ An internet connection is only needed as a time source — all astronomical calc
 * Optional bluish tint when the moon is below the horizon
 * Second display mode: 24-hour clock with sunrise/sunset, moonrise/moonset and the time the moon is above the horizon
 * Telegram bot for changing settings, querying current sun/moon coordinates and an optional daily report
+* The Telegram bot's profile photo shows the current moon and is updated daily
 * Serial interface (115200 baud) for settings and debug output: Julian date, RA/Dec, azimuth/altitude, libration, phase, parallactic angle, sidereal time, rotation, mask, sunrise/sunset times
 
 ## Configuration
@@ -48,6 +49,7 @@ The bot only answers messages from this chat ID. Leave the token empty to disabl
 |---|---|
 | `/mond` | Current moon coordinates: RA/Dec, azimuth/altitude, distance, phase, libration |
 | `/bild` | Current moon image as shown on the display (PNG) |
+| `/profilbild` | Update the bot's profile photo now |
 | `/sonne` | Current sun coordinates: RA/Dec, azimuth/altitude |
 | `/bericht` | Send the daily report now |
 | `/config` | Show current configuration |
@@ -58,7 +60,28 @@ The bot only answers messages from this chat ID. Leave the token empty to disabl
 | `/zeitzone <POSIX-TZ>` | Time zone used for all displayed times |
 | `/modus mond\|uhr` | Display mode: live moon or 24-hour clock |
 
-**Auto mode:** once a day at the configured time the bot sends a report with sunrise and sunset, the change of sunset time compared to the previous day, moonrise and moonset, and the current moon phase. Sunrise/sunset are calculated with Meeus' method, moonrise/moonset by hourly sampling of the moon's altitude with quadratic (Lagrange) interpolation of the horizon crossing, using the horizon altitude after Meeus. All calculations are done in UT; the report covers the local calendar day (events of the UT days overlapping it are converted to local time and filtered by local date).
+**Auto mode:** once a day at the configured time the bot sends a compact report, for example:
+```
+📅 27.09.2026
+
+☼↑ 07:14 ☼↓ 19:05 (−2'3'')
+☽↓ 08:12 ☽↑ 19:40
+🌔 73% (⬈) ▅⇡
+🌕🔴 28.08.
+```
+* `☼↑`/`☼↓`: sunrise and sunset, followed by the change of sunset time compared to the previous day (minutes'seconds'')
+* `☽↑`/`☽↓`: moonrise and moonset in chronological order; events that do not occur on this day are omitted
+* Moon phase symbol, illuminated fraction and `⬈` waxing / `⬊` waning
+* `▁▂▃▅▇`: today's culmination height of the moon relative to the range possible at the observer's latitude (declination ±28.6° at major lunar standstill). The outer levels are narrow, so `▁`/`▇` only appear on the few days around the monthly extremes.
+* `⇡`/`⇣`: tomorrow's culmination is higher/lower than today's
+* Events within the next 14 days (line only present if there are any), each with its local date:
+  * `🌕🔴` lunar eclipse (umbral, |β| < 0.95° at full moon), `✗` appended if the moon is below the horizon at mid-eclipse
+  * `☀🌑` solar eclipse somewhere on Earth (|β| < 1.45° at new moon; local visibility is not checked)
+  * `🌕＋`/`🌕－` super moon (full moon closer than 360 000 km) / mini moon (farther than 405 000 km)
+
+Sunrise/sunset are calculated with Meeus' method, moonrise/moonset by hourly sampling of the moon's altitude with quadratic (Lagrange) interpolation of the horizon crossing, using the horizon altitude after Meeus. Full and new moon are found by bisection of the moon's elongation. All calculations are done in UT; the report covers the local calendar day (events of the UT days overlapping it are converted to local time and filtered by local date).
+
+**Profile photo:** after start and then daily at the report time (independent of auto mode), the bot renders the current moon with the fixed display options 13 (darkened unilluminated side, NASA texture, libration), encodes it as a 240×240 JPEG on the device and sets it as its profile photo via `setMyProfilePhoto`. If an update fails, it is retried every 15 minutes. The JPEG is created in a temporary 48 KB RAM buffer; nothing is stored in flash.
 
 ### NTP server
 The NTP server and UTC offset are configured in `src/MondPhase.ino`:
@@ -108,8 +131,8 @@ Example: `set_options 9` enables earthshine + libration.
 * Centre: current moon, rendered like the moon display
 
 ## Hardware
-* ESP32C3 Super mini
-* 1,28 Zoll IPS Display rund (GC9A01)
+* ESP32-C3 Super Mini
+* 1.28 inch round IPS display (GC9A01)
 
 ## Software Requirements
 * [VS Code](https://code.visualstudio.com/) with the [pioarduino IDE extension](https://github.com/pioarduino/platform-espressif32)
@@ -119,6 +142,7 @@ Example: `set_options 9` enables earthshine + libration.
   * `SerialCommands`
   * `UniversalTelegramBot`
   * `ArduinoJson` (v6)
+  * `JPEGENC` (JPEG encoder for the bot's profile photo)
 
 ## Building and Flashing
 1. Clone or download this repository and open the folder in VS Code.
