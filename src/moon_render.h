@@ -26,6 +26,9 @@ void moonRenderAngles(const SkyState& sky, double& rotation, double& mask);
 // und bereitet das Rendern vor.
 void prepareMoonRenderAt(const struct tm& utc);
 
+// Wie prepareMoonRenderAt(utc), aber mit genau diesen Optionen (ohne automatische Tönung).
+void prepareMoonRenderAt(const struct tm& utc, int options);
+
 // Farbe (RGB565) des Pixels (x, y), x und y in [-MOON_RADIUS_PX, MOON_RADIUS_PX).
 // Außerhalb des Mondkreises schwarz.
 uint16_t moonPixel(int x, int y);

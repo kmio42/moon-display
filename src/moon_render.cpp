@@ -85,6 +85,10 @@ void moonRenderAngles(const SkyState& sky, double& rotation, double& mask) {
 }
 
 void prepareMoonRenderAt(const struct tm& utc) {
+  prepareMoonRenderAt(utc, -1);
+}
+
+void prepareMoonRenderAt(const struct tm& utc, int options) {
   SkyState sky = computeSky(utc);
 
   double rot, mask;
@@ -97,9 +101,13 @@ void prepareMoonRenderAt(const struct tm& utc) {
   astro::Mat3 rotMatrix = multiplyMatrix(libLongitudeRot, libLatitudeRot);
               rotMatrix = multiplyMatrix(rotMatrix, axleRot);
 
-  int opts = configDisplayOptions;
-  if (sky.moonAzH.height < 0) {
-    opts |= OPTION_BLUISH_TINT;
+  // options < 0: Display-Optionen, unter dem Horizont bläulich getönt
+  int opts = options;
+  if (opts < 0) {
+    opts = configDisplayOptions;
+    if (sky.moonAzH.height < 0) {
+      opts |= OPTION_BLUISH_TINT;
+    }
   }
   prepareMoonRender(sky.phase, rot, mask, opts, rotMatrix);
 }

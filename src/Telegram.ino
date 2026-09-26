@@ -8,6 +8,8 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <UniversalTelegramBot.h>
+#include <JPEGENC.h>
+#include <new>
 #include <time.h>
 
 #include "astro.h"
@@ -51,6 +53,8 @@ static bool telegramEnabled = false;
 static bool telegramCommandsSet = false;
 static unsigned long lastTelegramPoll = 0;
 static int lastReportDay = -1;  // Lokaler Tag (Jahr*1000 + Tag im Jahr) des letzten Tagesberichts
+static int lastProfileDay = -1; // Lokaler Tag des letzten Profilbilds, -1: seit dem Start keins
+static unsigned long lastProfileAttempt = 0;
 
 // ── Formatierung ─────────────────────────────────────────────────────────────
 
@@ -212,6 +216,7 @@ static const char HELP_TEXT[] =
     "🌙 Mond-Display\n\n"
     "/mond – aktuelle Mondkoordinaten\n"
     "/bild – aktuelles Mondbild\n"
+    "/profilbild – Profilbild des Bots jetzt aktualisieren\n"
     "/sonne – aktuelle Sonnenkoordinaten\n"
     "/bericht – Tagesbericht jetzt senden\n"
     "/config – aktuelle Einstellungen\n"
@@ -226,6 +231,7 @@ static const char BOT_COMMANDS[] =
     "["
     "{\"command\":\"mond\",\"description\":\"Aktuelle Mondkoordinaten\"},"
     "{\"command\":\"bild\",\"description\":\"Aktuelles Mondbild\"},"
+    "{\"command\":\"profilbild\",\"description\":\"Profilbild des Bots aktualisieren\"},"
     "{\"command\":\"sonne\",\"description\":\"Aktuelle Sonnenkoordinaten\"},"
     "{\"command\":\"bericht\",\"description\":\"Tagesbericht jetzt senden\"},"
     "{\"command\":\"config\",\"description\":\"Aktuelle Einstellungen\"},"
@@ -297,6 +303,124 @@ static void sendMoonPhoto(const String& chatId) {
     bot.sendMessage(chatId, String(buf) + formatNow(), "");
 }
 
+// ── Profilbild ───────────────────────────────────────────────────────────────
+
+// Feste Darstellung des Profilbilds, unabhängig von den Display-Optionen
+constexpr int PROFILE_PHOTO_OPTIONS = OPTION_DARKEN_UNLIT | OPTION_USE_NASA_MODEL | OPTION_USE_LIBRATION; // 13
+constexpr int PROFILE_JPEG_BUFFER = 48 * 1024;
+constexpr unsigned long PROFILE_RETRY_INTERVAL = 15UL * 60 * 1000; // ms
+
+// Rendert den Mond als JPEG in out (PROFILE_JPEG_BUFFER Byte). Gibt die Länge zurück, 0 bei Fehler.
+static int encodeMoonJpeg(const struct tm& utc, uint8_t* out) {
+    JPEGENC* jpg = new (std::nothrow) JPEGENC;  // ca. 3 KB, zu groß für den Stack
+    if (jpg == nullptr) return 0;
+    prepareMoonRenderAt(utc, PROFILE_PHOTO_OPTIONS);
+
+    constexpr int SIZE = 2 * MOON_RADIUS_PX;
+    JPEGENCODE enc;
+    uint16_t block[16 * 16];
+    int rc = jpg->open(out, PROFILE_JPEG_BUFFER);
+    if (rc == JPEGE_SUCCESS) {
+        rc = jpg->encodeBegin(&enc, SIZE, SIZE, JPEGE_PIXEL_RGB565, JPEGE_SUBSAMPLE_420, JPEGE_Q_HIGH);
+    }
+    // MCU für MCU (16x16 Pixel) rendern und kodieren
+    while (rc == JPEGE_SUCCESS && enc.y < SIZE) {
+        for (int y = 0; y < enc.cy; y++) {
+            for (int x = 0; x < enc.cx; x++) {
+                block[y * enc.cx + x] = photoPixel(enc.x + x, enc.y + y);
+            }
+        }
+        rc = jpg->addMCU(&enc, (uint8_t*) block, enc.cx * sizeof(uint16_t));
+        if (enc.x == 0) yield();
+    }
+    int len = jpg->close();
+    if (rc != JPEGE_SUCCESS || jpg->getLastError() != JPEGE_SUCCESS) {
+        Serial.printf("Telegram: JPEG-Fehler %d\n", jpg->getLastError());
+        len = 0;
+    }
+    delete jpg;
+    return len;
+}
+
+// Setzt das JPEG als Profilbild des Bots (setMyProfilePhoto). Die Library kennt die Methode
+// nicht, deshalb wird die multipart-Anfrage hier selbst gebaut.
+static bool uploadProfilePhoto(const uint8_t* jpeg, int len) {
+    static const char BOUNDARY[] = "------------------------mond0profil0photo";
+    String head = String("--") + BOUNDARY + "\r\n"
+        "Content-Disposition: form-data; name=\"photo\"\r\n\r\n"
+        "{\"type\":\"static\",\"photo\":\"attach://moon\"}\r\n"
+        "--" + BOUNDARY + "\r\n"
+        "Content-Disposition: form-data; name=\"moon\"; filename=\"moon.jpg\"\r\n"
+        "Content-Type: image/jpeg\r\n\r\n";
+    String tail = String("\r\n--") + BOUNDARY + "--\r\n";
+
+    if (!telegramClient.connected() && !telegramClient.connect(TELEGRAM_HOST, TELEGRAM_SSL_PORT)) {
+        Serial.println("Telegram: keine Verbindung für Profilbild.");
+        return false;
+    }
+    telegramClient.print("POST /bot" TELEGRAM_BOT_TOKEN "/setMyProfilePhoto HTTP/1.1\r\n"
+                         "Host: " TELEGRAM_HOST "\r\n"
+                         "Connection: close\r\n"
+                         "Content-Type: multipart/form-data; boundary=");
+    telegramClient.print(BOUNDARY);
+    telegramClient.print("\r\nContent-Length: ");
+    telegramClient.print(head.length() + len + tail.length());
+    telegramClient.print("\r\n\r\n");
+    telegramClient.print(head);
+    for (int pos = 0; pos < len; pos += 1024) {
+        telegramClient.write(jpeg + pos, min(1024, len - pos));
+    }
+    telegramClient.print(tail);
+
+    // Antwort lesen, bis der Server die Verbindung schließt
+    String response;
+    const unsigned long start = millis();
+    while ((telegramClient.connected() || telegramClient.available()) && millis() - start < 15000) {
+        while (telegramClient.available()) response += (char) telegramClient.read();
+        delay(10);
+    }
+    telegramClient.stop();
+
+    const bool ok = response.indexOf("\"ok\":true") >= 0;
+    if (!ok) Serial.println("Telegram: Antwort auf Profilbild: " + response);
+    return ok;
+}
+
+// Rendert den aktuellen Mond und setzt ihn als Profilbild.
+static bool updateProfilePhoto() {
+    struct tm utc;
+    if (!currentUtc(utc)) return false;
+    uint8_t* jpeg = (uint8_t*) malloc(PROFILE_JPEG_BUFFER);
+    if (jpeg == nullptr) {
+        Serial.println("Telegram: kein Speicher für Profilbild.");
+        return false;
+    }
+    const unsigned long start = millis();
+    const int len = encodeMoonJpeg(utc, jpeg);
+    const bool ok = len > 0 && uploadProfilePhoto(jpeg, len);
+    free(jpeg);
+    Serial.printf("Telegram: Profilbild (%d Byte) %s in %lu ms.\n", len, ok ? "gesetzt" : "fehlgeschlagen", millis() - start);
+    return ok;
+}
+
+// Aktualisiert das Profilbild nach dem Start und danach täglich zur Berichtszeit.
+static void checkProfilePhoto() {
+    time_t now = time(nullptr);
+    if (now < MIN_VALID_TIME) return;
+
+    struct tm lt;
+    utcToLocal(now, lt);
+    const int day = localDayKey(lt);
+    if (lastProfileDay != -1 && (day == lastProfileDay || lt.tm_hour * 60 + lt.tm_min < configAutoTime)) return;
+    if (lastProfileAttempt != 0 && millis() - lastProfileAttempt < PROFILE_RETRY_INTERVAL) return;
+
+    lastProfileAttempt = millis();
+    if (updateProfilePhoto()) {
+        lastProfileDay = day;
+        lastProfileAttempt = 0;
+    }
+}
+
 // ── Auto-Modus ───────────────────────────────────────────────────────────────
 
 // Markiert den heutigen Bericht als erledigt, wenn die Berichtszeit schon vorbei ist.
@@ -357,6 +481,9 @@ static String handleCommand(String text, const String& chatId) {
     if (cmd == "/bild") {
         sendMoonPhoto(chatId);
         return "";  // Antwort wurde bereits gesendet
+    }
+    if (cmd == "/profilbild") {
+        return updateProfilePhoto() ? "Profilbild aktualisiert." : "Das Profilbild konnte nicht gesetzt werden.";
     }
     if (cmd == "/sonne") {
         return buildSunMessage();
@@ -491,4 +618,5 @@ void handleTelegram() {
     }
 
     checkAutoReport();
+    checkProfilePhoto();
 }
