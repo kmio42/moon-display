@@ -16,6 +16,7 @@ An internet connection is only needed as a time source — all astronomical calc
 * Optional bluish tint when the moon is below the horizon
 * Second display mode: 24-hour clock with sunrise/sunset, moonrise/moonset and the time the moon is above the horizon
 * Telegram bot for changing settings, querying current sun/moon coordinates and an optional daily report
+* Daily report can additionally (or exclusively) be sent as a push notification via the [Pushover](https://pushover.net) app
 * The Telegram bot's profile photo shows the current moon and is updated daily
 * Serial interface (115200 baud) for settings and debug output: Julian date, RA/Dec, azimuth/altitude, libration, phase, parallactic angle, sidereal time, rotation, mask, sunrise/sunset times
 
@@ -51,7 +52,7 @@ The bot only answers messages from this chat ID. Leave the token empty to disabl
 | `/bild` | Current moon image as shown on the display (PNG) |
 | `/profilbild` | Update the bot's profile photo now |
 | `/sonne` | Current sun coordinates: RA/Dec, azimuth/altitude |
-| `/bericht` | Send the daily report now |
+| `/bericht` | Send the daily report now (also to Pushover, if configured) |
 | `/config` | Show current configuration |
 | `/standort <lat> <lon>` | Set observer location in decimal degrees |
 | `/optionen <value>` | Set display options bitmask (see below) |
@@ -60,7 +61,7 @@ The bot only answers messages from this chat ID. Leave the token empty to disabl
 | `/zeitzone <POSIX-TZ>` | Time zone used for all displayed times |
 | `/modus mond\|uhr` | Display mode: live moon or 24-hour clock |
 
-**Auto mode:** once a day at the configured time the bot sends a compact report, for example:
+**Auto mode:** once a day at the configured time the bot sends a compact report (and/or Pushover, see below), for example:
 ```
 📅 27.09.2026
 
@@ -83,6 +84,18 @@ Sunrise/sunset are calculated with Meeus' method, moonrise/moonset by hourly sam
 
 **Profile photo:** after start and then daily at the report time (independent of auto mode), the bot renders the current moon with the fixed display options 13 (darkened unilluminated side, NASA texture, libration), encodes it as a 240×240 JPEG on the device and sets it as its profile photo via `setMyProfilePhoto`. If an update fails, it is retried every 15 minutes. The JPEG is created in a temporary 48 KB RAM buffer; nothing is stored in flash.
 
+### Pushover (optional)
+The daily report can also be delivered as a push notification via [Pushover](https://pushover.net). This works with or without the Telegram bot; if both are configured, the report goes to both.
+1. Create an application at [pushover.net/apps/build](https://pushover.net/apps/build) and copy its API token.
+2. Copy your user key from the Pushover dashboard.
+3. Add both to `src/credentials.h`:
+```cpp
+#define PUSHOVER_APP_TOKEN "azGD..."
+#define PUSHOVER_USER_KEY  "uQiR..."
+#define PUSHOVER_DEVICE    ""   // optional: device name, empty = all devices
+```
+Pushover only receives; auto mode and report time are set via Telegram or the serial interface (`set_auto`, `set_autotime`). If sending fails, it is retried every 5 minutes.
+
 ### NTP server
 The NTP server and UTC offset are configured in `src/MondPhase.ino`:
 ```cpp
@@ -103,8 +116,8 @@ All runtime settings are stored in flash (NVS) and survive reboots. Connect at *
 | `set_time DD.MM.YYYY HH:MM:SS` | Set system time manually (UTC) |
 | `wifi [on\|off]` | Enable or disable Wi-Fi |
 | `mode moon\|clock` | Display mode: live moon or 24-hour clock (persistent) |
-| `set_auto on\|off` | Enable or disable the daily Telegram report |
-| `set_autotime HH:MM` | Time of the daily Telegram report (local time) |
+| `set_auto on\|off` | Enable or disable the daily report (Telegram/Pushover) |
+| `set_autotime HH:MM` | Time of the daily report (local time) |
 | `set_timezone <POSIX-TZ>` | Time zone for displayed times (default `CET-1CEST,M3.5.0,M10.5.0/3`) |
 
 **Display options bitmask** (combine with `+`):
@@ -149,7 +162,7 @@ Example: `set_options 9` enables earthshine + libration.
 ## Building and Flashing
 1. Clone or download this repository and open the folder in VS Code.
 2. pioarduino will automatically install the required libraries on first build.
-3. Copy `src/credentials.h.template` to `src/credentials.h` and fill in your Wi-Fi credentials (and optionally the Telegram bot token and chat ID).
+3. Copy `src/credentials.h.template` to `src/credentials.h` and fill in your Wi-Fi credentials (and optionally the Telegram bot token and chat ID and/or the Pushover app token and user key).
 4. Connect the ESP32-C3 via USB.
 5. Click **Upload** in the pioarduino toolbar (or run `platformio run --target upload`) to build and flash the firmware.
 6. Use the pioarduino **Serial Monitor** at 115200 baud to view debug output.

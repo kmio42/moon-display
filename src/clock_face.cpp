@@ -300,21 +300,21 @@ void drawInnerDial(Adafruit_GFX* gfx, const ClockData& d, float nearHours) {
         centeredText(gfx, digit.text, x, y, COLOR_MAJOR, false);
     }
 
-    // Sonne und Mond
+    // Mond zuerst, damit die Sonnenzeiger bei Überlappung obenauf liegen
     const float handEnd = RING - 2.0f;
-    if (d.hasSunrise  && isNear(d.sunrise,  nearHours)) radialLine(gfx, d.sunrise,  HAND_START, handEnd, 3.0f, COLOR_SUN);
-    if (d.hasSunset   && isNear(d.sunset,   nearHours)) radialLine(gfx, d.sunset,   HAND_START, handEnd, 3.0f, COLOR_SUN);
     if (d.hasMoonrise && isNear(d.moonrise, nearHours)) radialLine(gfx, d.moonrise, HAND_START, handEnd, 3.0f, COLOR_MOON);
     if (d.hasMoonset  && isNear(d.moonset,  nearHours)) radialLine(gfx, d.moonset,  HAND_START, handEnd, 3.0f, COLOR_MOON);
 
+    gfx->setFont(nullptr);
     if (d.hasDashed && isNear(d.dashed, nearHours)) {
         dashedRadialLine(gfx, d.dashed, HAND_START, handEnd, 2.0f, COLOR_MOON);
-        gfx->setFont(nullptr);
         float x, y;
         polar(d.dashed, LABEL_RADIUS, x, y);
         centeredText(gfx, d.dashedDayOffset > 0 ? "+1" : "-1", x, y, COLOR_MOON, true);
     }
-    gfx->setFont(nullptr);
+
+    if (d.hasSunrise  && isNear(d.sunrise,  nearHours)) radialLine(gfx, d.sunrise,  HAND_START, handEnd, 3.0f, COLOR_SUN);
+    if (d.hasSunset   && isNear(d.sunset,   nearHours)) radialLine(gfx, d.sunset,   HAND_START, handEnd, 3.0f, COLOR_SUN);
 }
 
 void drawNowHand(Adafruit_GFX* gfx, float hours, uint16_t color) {

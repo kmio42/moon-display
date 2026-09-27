@@ -319,8 +319,8 @@ void cmd_help(SerialCommands* sender)
   sender->GetSerial()->println("  set_location <lat> <lon> - Standort persistent speichern (Dezimalgrad)");
   sender->GetSerial()->println("  set_options <wert> - Darstellungsoptionen persistent speichern (Bitfeld)");
   sender->GetSerial()->println("    Bits: 1=darken_unlit, 2=bluish_tint, 4=use_nasa_model, 8=use_libration");
-  sender->GetSerial()->println("  set_auto on|off - Täglichen Telegram-Bericht ein/aus");
-  sender->GetSerial()->println("  set_autotime HH:MM - Uhrzeit des Telegram-Berichts (Lokalzeit)");
+  sender->GetSerial()->println("  set_auto on|off - Täglichen Bericht (Telegram/Pushover) ein/aus");
+  sender->GetSerial()->println("  set_autotime HH:MM - Uhrzeit des Tagesberichts (Lokalzeit)");
   sender->GetSerial()->println("  set_timezone <POSIX-TZ> - Zeitzone für Ausgaben, z. B. CET-1CEST,M3.5.0,M10.5.0/3");
   sender->GetSerial()->println("  config - Aktuelle Konfiguration anzeigen");
 }

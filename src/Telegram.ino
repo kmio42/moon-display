@@ -2,6 +2,7 @@
  * Telegram.ino – Telegram-Bot für Einstellungen, Koordinaten und Tagesbericht
  *
  * Nur Nachrichten aus TELEGRAM_CHAT_ID werden beantwortet.
+ * Der Tagesbericht geht an Telegram und/oder Pushover (Pushover.ino), je nachdem was konfiguriert ist.
  * Alle Berechnungen laufen in UT, erst die Ausgabe wird in Lokalzeit (configTimezone) umgerechnet.
  */
 
@@ -44,15 +45,22 @@ extern void setDisplayMode(int displayMode);
 extern const char* displayModeName();
 extern int configDisplayMode;
 
+// Pushover (definiert in Pushover.ino)
+extern bool pushoverEnabled();
+extern bool sendPushover(const String& message, const String& title);
+
 constexpr unsigned long TELEGRAM_POLL_INTERVAL = 3000;  // ms
 constexpr time_t        MIN_VALID_TIME         = 1700000000; // Zeit gilt erst nach NTP-Sync als gültig
+constexpr unsigned long PUSHOVER_RETRY_INTERVAL = 5UL * 60 * 1000; // ms, schont das Nachrichtenkontingent
 
 static WiFiClientSecure telegramClient;
 static UniversalTelegramBot bot(TELEGRAM_BOT_TOKEN, telegramClient);
 static bool telegramEnabled = false;
 static bool telegramCommandsSet = false;
 static unsigned long lastTelegramPoll = 0;
-static int lastReportDay = -1;  // Lokaler Tag (Jahr*1000 + Tag im Jahr) des letzten Tagesberichts
+static int lastReportDay = -1;     // Lokaler Tag (Jahr*1000 + Tag im Jahr) des letzten Tagesberichts über Telegram
+static int lastPushoverDay = -1;   // dito über Pushover
+static unsigned long lastPushoverAttempt = 0;
 static int lastProfileDay = -1; // Lokaler Tag des letzten Profilbilds, -1: seit dem Start keins
 static unsigned long lastProfileAttempt = 0;
 
@@ -237,6 +245,7 @@ static String buildConfigMessage() {
     snprintf(buf, sizeof(buf), "Auto-Modus: %s, täglich um %02d:%02d\n",
              configAutoMode ? "an" : "aus", configAutoTime / 60, configAutoTime % 60);
     msg += buf;
+    msg += String("Pushover: ") + (pushoverEnabled() ? "an" : "nicht konfiguriert") + "\n";
     msg += "Zeitzone: " + configTimezone + "\n";
     msg += String("Anzeige: ") + displayModeName() + "\n";
     msg += "Lokalzeit: " + formatNow();
@@ -249,7 +258,7 @@ static const char HELP_TEXT[] =
     "/bild – aktuelles Mondbild\n"
     "/profilbild – Profilbild des Bots jetzt aktualisieren\n"
     "/sonne – aktuelle Sonnenkoordinaten\n"
-    "/bericht – Tagesbericht jetzt senden\n"
+    "/bericht – Tagesbericht jetzt senden (auch an Pushover)\n"
     "/config – aktuelle Einstellungen\n"
     "/standort <lat> <lon> – Standort in Dezimalgrad\n"
     "/optionen <wert> – Darstellung (Bits: 1=abdunkeln, 2=bläulich, 4=NASA-Textur, 8=Libration)\n"
@@ -461,15 +470,18 @@ static void checkProfilePhoto() {
 void resetAutoReportDay() {
     time_t now = time(nullptr);
     if (now < MIN_VALID_TIME) {
-        lastReportDay = -1;
+        lastReportDay = lastPushoverDay = -1;
         return;
     }
     struct tm lt;
     utcToLocal(now, lt);
     int minutes = lt.tm_hour * 60 + lt.tm_min;
-    lastReportDay = (minutes >= configAutoTime) ? localDayKey(lt) : 0;
+    lastReportDay = lastPushoverDay = (minutes >= configAutoTime) ? localDayKey(lt) : 0;
+    lastPushoverAttempt = 0;
 }
 
+// Sendet den Tagesbericht zur Berichtszeit über jeden konfigurierten Kanal.
+// Jeder Kanal wird getrennt wiederholt, bis der Versand klappt.
 static void checkAutoReport() {
     time_t now = time(nullptr);
     if (now < MIN_VALID_TIME) return;
@@ -484,10 +496,21 @@ static void checkAutoReport() {
     utcToLocal(now, lt);
     int minutes = lt.tm_hour * 60 + lt.tm_min;
     int day = localDayKey(lt);
-    if (day != lastReportDay && minutes >= configAutoTime) {
+    if (minutes < configAutoTime) return;
+
+    if (telegramEnabled && day != lastReportDay) {
         Serial.println("Telegram: sende Tagesbericht...");
         if (bot.sendMessage(TELEGRAM_CHAT_ID, buildDailyReport(), "")) {
             lastReportDay = day;
+        }
+    }
+    if (pushoverEnabled() && day != lastPushoverDay
+        && (lastPushoverAttempt == 0 || millis() - lastPushoverAttempt >= PUSHOVER_RETRY_INTERVAL)) {
+        Serial.println("Pushover: sende Tagesbericht...");
+        lastPushoverAttempt = millis();
+        if (sendPushover(buildDailyReport(), "")) {
+            lastPushoverDay = day;
+            lastPushoverAttempt = 0;
         }
     }
 }
@@ -522,7 +545,11 @@ static String handleCommand(String text, const String& chatId) {
         return buildSunMessage();
     }
     if (cmd == "/bericht") {
-        return buildDailyReport();
+        String report = buildDailyReport();
+        if (pushoverEnabled() && !sendPushover(report, "")) {
+            bot.sendMessage(chatId, "Pushover: Bericht konnte nicht gesendet werden.", "");
+        }
+        return report;
     }
     if (cmd == "/config") {
         return buildConfigMessage();
@@ -624,9 +651,13 @@ void setupTelegram() {
 }
 
 void handleTelegram() {
-    if (!telegramEnabled || WiFi.status() != WL_CONNECTED) return;
+    if (WiFi.status() != WL_CONNECTED) return;
     if (millis() - lastTelegramPoll < TELEGRAM_POLL_INTERVAL) return;
     lastTelegramPoll = millis();
+
+    // Tagesbericht auch ohne Telegram, wenn nur Pushover konfiguriert ist
+    checkAutoReport();
+    if (!telegramEnabled) return;
 
     if (!telegramCommandsSet) {
         telegramCommandsSet = bot.setMyCommands(BOT_COMMANDS);
@@ -650,6 +681,5 @@ void handleTelegram() {
         count = bot.getUpdates(bot.last_message_received + 1);
     }
 
-    checkAutoReport();
     checkProfilePhoto();
 }
