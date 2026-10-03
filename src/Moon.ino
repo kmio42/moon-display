@@ -43,7 +43,7 @@ void calculateMoon(const struct tm& time, bool printInfo, Adafruit_GC9A01A* tft 
     if (printInfo) {
         SkyState sky = computeSky(time);
         double rot, mask;
-        moonRenderAngles(sky, rot, mask);
+        moonRenderAngles(sky, configDisplayOptions, rot, mask);
         Serial.printf("  Julianisches Datum:       %f\n", sky.jd);
         Serial.printf("  Mondposition RA/Dek:      %6.2f° / %6.2f°\n", sky.moonRaDek.ra * astro::RAD2DEG, sky.moonRaDek.dek * astro::RAD2DEG);
         Serial.printf("  Mondposition Azimut/Höhe: %6.2f° / %6.2f°\n", sky.moonAzH.azimut * astro::RAD2DEG, sky.moonAzH.height * astro::RAD2DEG);

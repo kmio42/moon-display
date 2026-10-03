@@ -128,8 +128,12 @@ All runtime settings are stored in flash (NVS) and survive reboots. Connect at *
 | 1 | 2 | Bluish tint when moon is below horizon |
 | 2 | 4 | Use NASA LROC texture instead of photograph |
 | 3 | 8 | Apply libration |
+| 4 | 16 | Ignore the parallactic angle: celestial north up instead of the zenith |
+| 5 | 32 | Ignore the position angle of the moon's axis: lunar north pole up |
 
 Example: `set_options 9` enables earthshine + libration.
+
+By default the moon is shown as seen in the sky, with the zenith up. With bit 4 it appears as in an equatorially mounted telescope (celestial north up); with bits 4 and 5 combined, the lunar north pole points straight up, as in a lunar map. The terminator is rotated along with the moon, so the lit features stay correct.
 
 ## Display modes
 

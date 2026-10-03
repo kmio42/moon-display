@@ -301,6 +301,8 @@ void cmd_config_(SerialCommands* sender)
     sender->GetSerial()->printf("    [%c] bluish_tint     (2)\n",   (configDisplayOptions & 2) ? 'x' : ' ');
     sender->GetSerial()->printf("    [%c] use_nasa_model  (4)\n",   (configDisplayOptions & 4) ? 'x' : ' ');
     sender->GetSerial()->printf("    [%c] use_libration   (8)\n",   (configDisplayOptions & 8) ? 'x' : ' ');
+    sender->GetSerial()->printf("    [%c] ignore_parallactic (16)\n", (configDisplayOptions & 16) ? 'x' : ' ');
+    sender->GetSerial()->printf("    [%c] ignore_position_angle (32)\n", (configDisplayOptions & 32) ? 'x' : ' ');
     sender->GetSerial()->printf("  Auto-Modus: %s, täglich um %02d:%02d\n", configAutoMode ? "an" : "aus", configAutoTime / 60, configAutoTime % 60);
     sender->GetSerial()->printf("  Zeitzone:  %s\n", configTimezone.c_str());
     sender->GetSerial()->printf("  Anzeige:   %s\n", displayModeName());
@@ -318,7 +320,8 @@ void cmd_help(SerialCommands* sender)
   sender->GetSerial()->println("  set_time TT.MM.JJJJ HH:MM:SS - Set system time (UTC)");
   sender->GetSerial()->println("  set_location <lat> <lon> - Standort persistent speichern (Dezimalgrad)");
   sender->GetSerial()->println("  set_options <wert> - Darstellungsoptionen persistent speichern (Bitfeld)");
-  sender->GetSerial()->println("    Bits: 1=darken_unlit, 2=bluish_tint, 4=use_nasa_model, 8=use_libration");
+  sender->GetSerial()->println("    Bits: 1=darken_unlit, 2=bluish_tint, 4=use_nasa_model, 8=use_libration,");
+  sender->GetSerial()->println("          16=ignore_parallactic, 32=ignore_position_angle");
   sender->GetSerial()->println("  set_auto on|off - Täglichen Bericht (Telegram/Pushover) ein/aus");
   sender->GetSerial()->println("  set_autotime HH:MM - Uhrzeit des Tagesberichts (Lokalzeit)");
   sender->GetSerial()->println("  set_timezone <POSIX-TZ> - Zeitzone für Ausgaben, z. B. CET-1CEST,M3.5.0,M10.5.0/3");

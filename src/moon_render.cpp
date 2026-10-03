@@ -77,11 +77,22 @@ void prepareMoonRender(float phaseParam, float rotation, float mask, int options
   }
 }
 
-void moonRenderAngles(const SkyState& sky, double& rotation, double& mask) {
-  // Zenitwinkel des hellen Mondrandes: chi - q
-  mask = (sky.chi - sky.q + M_PI/2);
+// Parallaktischer Winkel q und Positionswinkel P der Mondachse, wie sie laut Optionen
+// in die Darstellung eingehen (0, wenn ignoriert).
+static void orientationAngles(const SkyState& sky, int options, double& q, double& p) {
+  q = (options & OPTION_IGNORE_PARALLACTIC) ? 0.0 : sky.q;
+  p = (options & OPTION_IGNORE_POSITION_ANGLE) ? 0.0 : sky.moonAxle.axle;
+}
 
-  rotation = (sky.moonAxle.axle - sky.q + 0.004919 - 0.116413461); //ermittelte Korrektur mit Stellarium
+void moonRenderAngles(const SkyState& sky, int options, double& rotation, double& mask) {
+  double q, p;
+  orientationAngles(sky, options, q, p);
+
+  // Zenitwinkel des hellen Mondrandes: chi - q. Ohne Positionswinkel wird das ganze Bild
+  // um P zurückgedreht (Mondnordpol oben), der helle Rand also mit.
+  mask = (sky.chi - (sky.moonAxle.axle - p) - q + M_PI/2);
+
+  rotation = (p - q + 0.004919 - 0.116413461); //ermittelte Korrektur mit Stellarium
 }
 
 void prepareMoonRenderAt(const struct tm& utc) {
@@ -91,24 +102,27 @@ void prepareMoonRenderAt(const struct tm& utc) {
 void prepareMoonRenderAt(const struct tm& utc, int options) {
   SkyState sky = computeSky(utc);
 
-  double rot, mask;
-  moonRenderAngles(sky, rot, mask);
+  // options < 0: Display-Optionen; mit OPTION_BLUISH_TINT nur unter dem Horizont bläulich getönt
+  int opts = options;
+  if (opts < 0) {
+    opts = configDisplayOptions & ~OPTION_BLUISH_TINT;
+    if ((configDisplayOptions & OPTION_BLUISH_TINT) && sky.moonAzH.height < 0) {
+      opts |= OPTION_BLUISH_TINT;
+    }
+  }
 
+  double rot, mask;
+  moonRenderAngles(sky, opts, rot, mask);
+
+  double q, p;
+  orientationAngles(sky, opts, q, p);
   const astro::Mat3 libLongitudeRot = astro::createRotationMatrix({0, -1, 0}, -sky.moonAxle.libration.longitude);
   const astro::Mat3 libLatitudeRot = astro::createRotationMatrix({1, 0, 0}, -sky.moonAxle.libration.latitude);
-  const astro::Mat3 axleRot = astro::createRotationMatrix({0, 0, 1}, -sky.moonAxle.axle + sky.q);
+  const astro::Mat3 axleRot = astro::createRotationMatrix({0, 0, 1}, -p + q);
 
   astro::Mat3 rotMatrix = multiplyMatrix(libLongitudeRot, libLatitudeRot);
               rotMatrix = multiplyMatrix(rotMatrix, axleRot);
 
-  // options < 0: Display-Optionen, unter dem Horizont bläulich getönt
-  int opts = options;
-  if (opts < 0) {
-    opts = configDisplayOptions;
-    if (sky.moonAzH.height < 0) {
-      opts |= OPTION_BLUISH_TINT;
-    }
-  }
   prepareMoonRender(sky.phase, rot, mask, opts, rotMatrix);
 }
 

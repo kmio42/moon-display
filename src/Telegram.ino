@@ -242,6 +242,10 @@ static String buildConfigMessage() {
     msg += buf;
     snprintf(buf, sizeof(buf), "  [%c] Libration (8)\n", (configDisplayOptions & 8) ? 'x' : ' ');
     msg += buf;
+    snprintf(buf, sizeof(buf), "  [%c] Ohne parallaktischen Winkel (16)\n", (configDisplayOptions & 16) ? 'x' : ' ');
+    msg += buf;
+    snprintf(buf, sizeof(buf), "  [%c] Ohne Positionswinkel (32)\n", (configDisplayOptions & 32) ? 'x' : ' ');
+    msg += buf;
     snprintf(buf, sizeof(buf), "Auto-Modus: %s, täglich um %02d:%02d\n",
              configAutoMode ? "an" : "aus", configAutoTime / 60, configAutoTime % 60);
     msg += buf;
@@ -261,7 +265,7 @@ static const char HELP_TEXT[] =
     "/bericht – Tagesbericht jetzt senden (auch an Pushover)\n"
     "/config – aktuelle Einstellungen\n"
     "/standort <lat> <lon> – Standort in Dezimalgrad\n"
-    "/optionen <wert> – Darstellung (Bits: 1=abdunkeln, 2=bläulich, 4=NASA-Textur, 8=Libration)\n"
+    "/optionen <wert> – Darstellung (Bits: 1=abdunkeln, 2=bläulich, 4=NASA-Textur, 8=Libration, 16=ohne parallakt. Winkel, 32=ohne Positionswinkel)\n"
     "/auto on|off – täglichen Bericht ein/aus\n"
     "/autozeit HH:MM – Uhrzeit des Berichts (Lokalzeit)\n"
     "/zeitzone <POSIX-TZ> – z. B. CET-1CEST,M3.5.0,M10.5.0/3\n"
