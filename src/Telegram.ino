@@ -1,7 +1,9 @@
 /**
  * Telegram.ino – Telegram-Bot für Einstellungen, Koordinaten und Tagesbericht
  *
- * Nur Nachrichten aus TELEGRAM_CHAT_ID werden beantwortet.
+ * Nur Nachrichten von TELEGRAM_CHAT_ID werden beantwortet, im privaten Chat oder in der Gruppe
+ * TELEGRAM_GROUP_ID. In die Gruppe postet der Bot außerdem den Tagesbericht und setzt das Mondbild
+ * als Gruppenbild.
  * Der Tagesbericht geht an Telegram und/oder Pushover (Pushover.ino), je nachdem was konfiguriert ist.
  * Alle Berechnungen laufen in UT, erst die Ausgabe wird in Lokalzeit (configTimezone) umgerechnet.
  */
@@ -25,6 +27,9 @@
 #endif
 #ifndef TELEGRAM_CHAT_ID
 #define TELEGRAM_CHAT_ID ""
+#endif
+#ifndef TELEGRAM_GROUP_ID
+#define TELEGRAM_GROUP_ID ""  // leer: keine Gruppe
 #endif
 
 // Persistente Konfiguration (definiert in Config.ino)
@@ -61,8 +66,14 @@ static unsigned long lastTelegramPoll = 0;
 static int lastReportDay = -1;     // Lokaler Tag (Jahr*1000 + Tag im Jahr) des letzten Tagesberichts über Telegram
 static int lastPushoverDay = -1;   // dito über Pushover
 static unsigned long lastPushoverAttempt = 0;
+static int lastGroupReportDay = -1; // dito in der Gruppe
 static int lastProfileDay = -1; // Lokaler Tag des letzten Profilbilds, -1: seit dem Start keins
+static int lastGroupPhotoDay = -1; // dito Gruppenbild
 static unsigned long lastProfileAttempt = 0;
+
+static bool groupEnabled() {
+    return strlen(TELEGRAM_GROUP_ID) > 0;
+}
 
 // ── Formatierung ─────────────────────────────────────────────────────────────
 
@@ -139,8 +150,8 @@ String buildDailyReport() {
 
     char buf[64];
     strftime(buf, sizeof(buf), "📅 %d.%m.%Y", &lt);
-    String msg = buf;
-    msg += "\n\n";
+    String msg = "";buf;
+    //msg += "\n\n";
 
     if (today.sunValid) {
         msg += "☼\uFE0E↑ ";
@@ -249,6 +260,7 @@ static String buildConfigMessage() {
     snprintf(buf, sizeof(buf), "Auto-Modus: %s, täglich um %02d:%02d\n",
              configAutoMode ? "an" : "aus", configAutoTime / 60, configAutoTime % 60);
     msg += buf;
+    msg += String("Gruppe: ") + (groupEnabled() ? TELEGRAM_GROUP_ID : "nicht konfiguriert") + "\n";
     msg += String("Pushover: ") + (pushoverEnabled() ? "an" : "nicht konfiguriert") + "\n";
     msg += "Zeitzone: " + configTimezone + "\n";
     msg += String("Anzeige: ") + displayModeName() + "\n";
@@ -260,7 +272,7 @@ static const char HELP_TEXT[] =
     "🌙 Mond-Display\n\n"
     "/mond – aktuelle Mondkoordinaten\n"
     "/bild – aktuelles Mondbild\n"
-    "/profilbild – Profilbild des Bots jetzt aktualisieren\n"
+    "/profilbild – Profil- und Gruppenbild jetzt aktualisieren\n"
     "/sonne – aktuelle Sonnenkoordinaten\n"
     "/bericht – Tagesbericht jetzt senden (auch an Pushover)\n"
     "/config – aktuelle Einstellungen\n"
@@ -277,7 +289,7 @@ static const char BOT_COMMANDS[] =
     "["
     "{\"command\":\"mond\",\"description\":\"Aktuelle Mondkoordinaten\"},"
     "{\"command\":\"bild\",\"description\":\"Aktuelles Mondbild\"},"
-    "{\"command\":\"profilbild\",\"description\":\"Profilbild des Bots aktualisieren\"},"
+    "{\"command\":\"profilbild\",\"description\":\"Profil- und Gruppenbild aktualisieren\"},"
     "{\"command\":\"sonne\",\"description\":\"Aktuelle Sonnenkoordinaten\"},"
     "{\"command\":\"bericht\",\"description\":\"Tagesbericht jetzt senden\"},"
     "{\"command\":\"config\",\"description\":\"Aktuelle Einstellungen\"},"
@@ -352,7 +364,7 @@ static void sendMoonPhoto(const String& chatId) {
 // ── Profilbild ───────────────────────────────────────────────────────────────
 
 // Feste Darstellung des Profilbilds, unabhängig von den Display-Optionen
-constexpr int PROFILE_PHOTO_OPTIONS = OPTION_DARKEN_UNLIT | OPTION_USE_NASA_MODEL | OPTION_USE_LIBRATION; // 13
+constexpr int PROFILE_PHOTO_OPTIONS = OPTION_DARKEN_UNLIT | OPTION_USE_NASA_MODEL | OPTION_USE_LIBRATION | OPTION_IGNORE_PARALLACTIC ; // 13
 constexpr int PROFILE_JPEG_BUFFER = 48 * 1024;
 constexpr unsigned long PROFILE_RETRY_INTERVAL = 15UL * 60 * 1000; // ms
 
@@ -388,27 +400,35 @@ static int encodeMoonJpeg(const struct tm& utc, uint8_t* out) {
     return len;
 }
 
-// Setzt das JPEG als Profilbild des Bots (setMyProfilePhoto). Die Library kennt die Methode
-// nicht, deshalb wird die multipart-Anfrage hier selbst gebaut.
-static bool uploadProfilePhoto(const uint8_t* jpeg, int len) {
-    static const char BOUNDARY[] = "------------------------mond0profil0photo";
-    String head = String("--") + BOUNDARY + "\r\n"
-        "Content-Disposition: form-data; name=\"photo\"\r\n\r\n"
-        "{\"type\":\"static\",\"photo\":\"attach://moon\"}\r\n"
-        "--" + BOUNDARY + "\r\n"
-        "Content-Disposition: form-data; name=\"moon\"; filename=\"moon.jpg\"\r\n"
+static const char PHOTO_BOUNDARY[] = "------------------------mond0profil0photo";
+
+// Ein Textfeld des multipart-Formulars
+static String formField(const char* name, const String& value) {
+    return String("--") + PHOTO_BOUNDARY + "\r\n"
+        "Content-Disposition: form-data; name=\"" + name + "\"\r\n\r\n" + value + "\r\n";
+}
+
+// Sendet das JPEG als Datei fileField zusammen mit den Formularfeldern fields an die Bot-Methode
+// method. Die Library kennt setMyProfilePhoto und setChatPhoto nicht, deshalb wird die
+// multipart-Anfrage hier selbst gebaut.
+static bool uploadJpeg(const char* method, const String& fields, const char* fileField,
+                       const uint8_t* jpeg, int len) {
+    String head = fields + "--" + PHOTO_BOUNDARY + "\r\n"
+        "Content-Disposition: form-data; name=\"" + fileField + "\"; filename=\"moon.jpg\"\r\n"
         "Content-Type: image/jpeg\r\n\r\n";
-    String tail = String("\r\n--") + BOUNDARY + "--\r\n";
+    String tail = String("\r\n--") + PHOTO_BOUNDARY + "--\r\n";
 
     if (!telegramClient.connected() && !telegramClient.connect(TELEGRAM_HOST, TELEGRAM_SSL_PORT)) {
-        Serial.println("Telegram: keine Verbindung für Profilbild.");
+        Serial.printf("Telegram: keine Verbindung für %s.\n", method);
         return false;
     }
-    telegramClient.print("POST /bot" TELEGRAM_BOT_TOKEN "/setMyProfilePhoto HTTP/1.1\r\n"
+    telegramClient.print("POST /bot" TELEGRAM_BOT_TOKEN "/");
+    telegramClient.print(method);
+    telegramClient.print(" HTTP/1.1\r\n"
                          "Host: " TELEGRAM_HOST "\r\n"
                          "Connection: close\r\n"
                          "Content-Type: multipart/form-data; boundary=");
-    telegramClient.print(BOUNDARY);
+    telegramClient.print(PHOTO_BOUNDARY);
     telegramClient.print("\r\nContent-Length: ");
     telegramClient.print(head.length() + len + tail.length());
     telegramClient.print("\r\n\r\n");
@@ -428,43 +448,66 @@ static bool uploadProfilePhoto(const uint8_t* jpeg, int len) {
     telegramClient.stop();
 
     const bool ok = response.indexOf("\"ok\":true") >= 0;
-    if (!ok) Serial.println("Telegram: Antwort auf Profilbild: " + response);
+    if (!ok) Serial.printf("Telegram: Antwort auf %s: %s\n", method, response.c_str());
     return ok;
 }
 
-// Rendert den aktuellen Mond und setzt ihn als Profilbild.
-static bool updateProfilePhoto() {
+constexpr int PHOTO_PROFILE = 1;  // Profilbild des Bots
+constexpr int PHOTO_GROUP   = 2;  // Bild der Gruppe TELEGRAM_GROUP_ID
+
+// Rendert den aktuellen Mond einmal und setzt ihn als Profil- und/oder Gruppenbild (targets).
+// Gibt die erfolgreich gesetzten Ziele zurück.
+static int updateMoonPhotos(int targets) {
     struct tm utc;
-    if (!currentUtc(utc)) return false;
+    if (!currentUtc(utc)) return 0;
     uint8_t* jpeg = (uint8_t*) malloc(PROFILE_JPEG_BUFFER);
     if (jpeg == nullptr) {
         Serial.println("Telegram: kein Speicher für Profilbild.");
-        return false;
+        return 0;
     }
     const unsigned long start = millis();
     const int len = encodeMoonJpeg(utc, jpeg);
-    const bool ok = len > 0 && uploadProfilePhoto(jpeg, len);
+    int done = 0;
+    if (len > 0 && (targets & PHOTO_PROFILE)
+        && uploadJpeg("setMyProfilePhoto", formField("photo", "{\"type\":\"static\",\"photo\":\"attach://moon\"}"),
+                      "moon", jpeg, len)) {
+        done |= PHOTO_PROFILE;
+    }
+    // Der Bot braucht in der Gruppe Adminrechte mit "Gruppeninfo ändern"
+    if (len > 0 && (targets & PHOTO_GROUP)
+        && uploadJpeg("setChatPhoto", formField("chat_id", TELEGRAM_GROUP_ID), "photo", jpeg, len)) {
+        done |= PHOTO_GROUP;
+    }
     free(jpeg);
-    Serial.printf("Telegram: Profilbild (%d Byte) %s in %lu ms.\n", len, ok ? "gesetzt" : "fehlgeschlagen", millis() - start);
-    return ok;
+    Serial.printf("Telegram: Mondbild (%d Byte), Profilbild %s, Gruppenbild %s, %lu ms.\n", len,
+                  (targets & PHOTO_PROFILE) ? ((done & PHOTO_PROFILE) ? "gesetzt" : "fehlgeschlagen") : "-",
+                  (targets & PHOTO_GROUP) ? ((done & PHOTO_GROUP) ? "gesetzt" : "fehlgeschlagen") : "-",
+                  millis() - start);
+    return done;
 }
 
-// Aktualisiert das Profilbild nach dem Start und danach täglich zur Berichtszeit.
-static void checkProfilePhoto() {
+// Aktualisiert Profil- und Gruppenbild nach dem Start und danach täglich zur Berichtszeit.
+// Ein fehlgeschlagenes Ziel wird allein wiederholt, damit die Gruppe keine doppelte
+// Meldung über ein neues Gruppenbild bekommt.
+static void checkMoonPhotos() {
     time_t now = time(nullptr);
     if (now < MIN_VALID_TIME) return;
 
     struct tm lt;
     utcToLocal(now, lt);
     const int day = localDayKey(lt);
-    if (lastProfileDay != -1 && (day == lastProfileDay || lt.tm_hour * 60 + lt.tm_min < configAutoTime)) return;
+    const bool due = lt.tm_hour * 60 + lt.tm_min >= configAutoTime;
+    int targets = 0;
+    if (lastProfileDay == -1 || (day != lastProfileDay && due)) targets |= PHOTO_PROFILE;
+    if (groupEnabled() && (lastGroupPhotoDay == -1 || (day != lastGroupPhotoDay && due))) targets |= PHOTO_GROUP;
+    if (targets == 0) return;
     if (lastProfileAttempt != 0 && millis() - lastProfileAttempt < PROFILE_RETRY_INTERVAL) return;
 
     lastProfileAttempt = millis();
-    if (updateProfilePhoto()) {
-        lastProfileDay = day;
-        lastProfileAttempt = 0;
-    }
+    const int done = updateMoonPhotos(targets);
+    if (done & PHOTO_PROFILE) lastProfileDay = day;
+    if (done & PHOTO_GROUP) lastGroupPhotoDay = day;
+    if (done == targets) lastProfileAttempt = 0;
 }
 
 // ── Auto-Modus ───────────────────────────────────────────────────────────────
@@ -474,13 +517,13 @@ static void checkProfilePhoto() {
 void resetAutoReportDay() {
     time_t now = time(nullptr);
     if (now < MIN_VALID_TIME) {
-        lastReportDay = lastPushoverDay = -1;
+        lastReportDay = lastGroupReportDay = lastPushoverDay = -1;
         return;
     }
     struct tm lt;
     utcToLocal(now, lt);
     int minutes = lt.tm_hour * 60 + lt.tm_min;
-    lastReportDay = lastPushoverDay = (minutes >= configAutoTime) ? localDayKey(lt) : 0;
+    lastReportDay = lastGroupReportDay = lastPushoverDay = (minutes >= configAutoTime) ? localDayKey(lt) : 0;
     lastPushoverAttempt = 0;
 }
 
@@ -508,6 +551,12 @@ static void checkAutoReport() {
             lastReportDay = day;
         }
     }
+    if (telegramEnabled && groupEnabled() && day != lastGroupReportDay) {
+        Serial.println("Telegram: sende Tagesbericht in die Gruppe...");
+        if (bot.sendMessage(TELEGRAM_GROUP_ID, buildDailyReport(), "")) {
+            lastGroupReportDay = day;
+        }
+    }
     if (pushoverEnabled() && day != lastPushoverDay
         && (lastPushoverAttempt == 0 || millis() - lastPushoverAttempt >= PUSHOVER_RETRY_INTERVAL)) {
         Serial.println("Pushover: sende Tagesbericht...");
@@ -527,9 +576,13 @@ static String handleCommand(String text, const String& chatId) {
     String cmd  = (space < 0) ? text : text.substring(0, space);
     String args = (space < 0) ? String("") : text.substring(space + 1);
     args.trim();
-    // "/befehl@BotName" in Gruppen
+    // "/befehl@BotName" in Gruppen; Befehle an andere Bots ignorieren
     int at = cmd.indexOf('@');
-    if (at >= 0) cmd = cmd.substring(0, at);
+    if (at >= 0) {
+        String target = cmd.substring(at + 1);
+        cmd = cmd.substring(0, at);
+        if (bot.userName.length() > 0 && !target.equalsIgnoreCase(bot.userName)) return "";
+    }
     cmd.toLowerCase();
 
     if (cmd == "/start" || cmd == "/hilfe" || cmd == "/help") {
@@ -543,7 +596,15 @@ static String handleCommand(String text, const String& chatId) {
         return "";  // Antwort wurde bereits gesendet
     }
     if (cmd == "/profilbild") {
-        return updateProfilePhoto() ? "Profilbild aktualisiert." : "Das Profilbild konnte nicht gesetzt werden.";
+        const int targets = PHOTO_PROFILE | (groupEnabled() ? PHOTO_GROUP : 0);
+        const int done = updateMoonPhotos(targets);
+        if (done == targets) return groupEnabled() ? "Profil- und Gruppenbild aktualisiert." : "Profilbild aktualisiert.";
+        String msg = (done & PHOTO_PROFILE) ? "Profilbild aktualisiert." : "Das Profilbild konnte nicht gesetzt werden.";
+        if (groupEnabled()) {
+            msg += (done & PHOTO_GROUP) ? "\nGruppenbild aktualisiert."
+                                        : "\nDas Gruppenbild konnte nicht gesetzt werden (Bot Admin mit \"Gruppeninfo ändern\"?).";
+        }
+        return msg;
     }
     if (cmd == "/sonne") {
         return buildSunMessage();
@@ -664,18 +725,24 @@ void handleTelegram() {
     if (!telegramEnabled) return;
 
     if (!telegramCommandsSet) {
-        telegramCommandsSet = bot.setMyCommands(BOT_COMMANDS);
-        if (telegramCommandsSet) Serial.println("Telegram bereit.");
+        // Eigener Benutzername, um in Gruppen "/befehl@AndererBot" zu erkennen
+        telegramCommandsSet = bot.getMe() && bot.setMyCommands(BOT_COMMANDS);
+        if (telegramCommandsSet) Serial.printf("Telegram bereit (@%s).\n", bot.userName.c_str());
     }
 
     int count = bot.getUpdates(bot.last_message_received + 1);
     while (count > 0) {
         for (int i = 0; i < count; i++) {
             const telegramMessage& message = bot.messages[i];
-            if (message.chat_id != TELEGRAM_CHAT_ID) {
-                Serial.printf("Telegram: Nachricht von unbekannter Chat-ID %s ignoriert.\n", message.chat_id.c_str());
+            // Nur Nachrichten des Besitzers, im privaten Chat oder in der konfigurierten Gruppe
+            const bool isGroup = groupEnabled() && message.chat_id == TELEGRAM_GROUP_ID;
+            if (message.from_id != TELEGRAM_CHAT_ID || (message.chat_id != TELEGRAM_CHAT_ID && !isGroup)) {
+                Serial.printf("Telegram: Nachricht von %s in Chat %s ignoriert.\n",
+                              message.from_id.c_str(), message.chat_id.c_str());
                 continue;
             }
+            // In der Gruppe nur auf Befehle reagieren, nicht auf normale Nachrichten
+            if (isGroup && !message.text.startsWith("/")) continue;
             Serial.printf("Telegram: %s\n", message.text.c_str());
             String reply = handleCommand(message.text, message.chat_id);
             if (reply.length() > 0) {
@@ -685,5 +752,5 @@ void handleTelegram() {
         count = bot.getUpdates(bot.last_message_received + 1);
     }
 
-    checkProfilePhoto();
+    checkMoonPhotos();
 }

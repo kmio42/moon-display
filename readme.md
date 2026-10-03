@@ -46,11 +46,20 @@ Copy `src/credentials.h.template` to `src/credentials.h` and add your networks:
 ```
 The bot only answers messages from this chat ID. Leave the token empty to disable the bot.
 
+**Group (optional):** the bot can also serve a group. It posts the daily report there and sets the current moon as the group photo.
+1. Add the bot to the group and make it an administrator with the right to change group info.
+2. Find the group ID (starts with `-100…` for supergroups), e.g. by forwarding a group message to [@userinfobot](https://t.me/userinfobot) or from `getUpdates`.
+3. Add it to `src/credentials.h`:
+```cpp
+#define TELEGRAM_GROUP_ID  "-1001234567890"
+```
+In the group the bot only reacts to commands sent by the user `TELEGRAM_CHAT_ID`; messages from other members, ordinary messages and commands addressed to other bots (`/cmd@OtherBot`) are ignored. Answers go to the chat where the command was sent. Telegram shows a service message in the group each time the photo changes, i.e. once a day.
+
 | Command | Description |
 |---|---|
 | `/mond` | Current moon coordinates: RA/Dec, azimuth/altitude, distance, phase, libration |
 | `/bild` | Current moon image as shown on the display (PNG) |
-| `/profilbild` | Update the bot's profile photo now |
+| `/profilbild` | Update the bot's profile photo (and the group photo) now |
 | `/sonne` | Current sun coordinates: RA/Dec, azimuth/altitude |
 | `/bericht` | Send the daily report now (also to Pushover, if configured) |
 | `/config` | Show current configuration |
@@ -61,7 +70,7 @@ The bot only answers messages from this chat ID. Leave the token empty to disabl
 | `/zeitzone <POSIX-TZ>` | Time zone used for all displayed times |
 | `/modus mond\|uhr` | Display mode: live moon or 24-hour clock |
 
-**Auto mode:** once a day at the configured time the bot sends a compact report (and/or Pushover, see below), for example:
+**Auto mode:** once a day at the configured time the bot sends a compact report to the private chat, the group (if configured) and Pushover (if configured), for example:
 ```
 📅 27.09.2026
 
@@ -82,7 +91,7 @@ The bot only answers messages from this chat ID. Leave the token empty to disabl
 
 Sunrise/sunset are calculated with Meeus' method, moonrise/moonset by hourly sampling of the moon's altitude with quadratic (Lagrange) interpolation of the horizon crossing, using the horizon altitude after Meeus. Full and new moon are found by bisection of the moon's elongation. All calculations are done in UT; the report covers the local calendar day (events of the UT days overlapping it are converted to local time and filtered by local date).
 
-**Profile photo:** after start and then daily at the report time (independent of auto mode), the bot renders the current moon with the fixed display options 13 (darkened unilluminated side, NASA texture, libration), encodes it as a 240×240 JPEG on the device and sets it as its profile photo via `setMyProfilePhoto`. If an update fails, it is retried every 15 minutes. The JPEG is created in a temporary 48 KB RAM buffer; nothing is stored in flash.
+**Profile and group photo:** after start and then daily at the report time (independent of auto mode), the bot renders the current moon with the fixed display options 13 (darkened unilluminated side, NASA texture, libration), encodes it as a 240×240 JPEG on the device and sets it as its profile photo via `setMyProfilePhoto` and, if a group is configured, as the group photo via `setChatPhoto`. If an update fails, only the failed one is retried every 15 minutes. The JPEG is created in a temporary 48 KB RAM buffer; nothing is stored in flash.
 
 ### Pushover (optional)
 The daily report can also be delivered as a push notification via [Pushover](https://pushover.net). This works with or without the Telegram bot; if both are configured, the report goes to both.
