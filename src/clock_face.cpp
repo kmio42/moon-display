@@ -8,6 +8,8 @@
 
 // Umrechnung in Lokalzeit (Config.ino)
 extern void utcToLocal(time_t t, struct tm& out);
+// true, wenn Telegram konfiguriert ist, aber keine Verbindung besteht (Telegram.ino)
+extern bool telegramConnectionLost();
 
 namespace {
 
@@ -29,6 +31,7 @@ constexpr uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
 }
 
 constexpr uint16_t COLOR_BLACK   = 0x0000;
+constexpr uint16_t COLOR_WHITE   = 0xFFFF;
 constexpr uint16_t COLOR_SUN     = rgb565(255, 243, 160);
 constexpr uint16_t COLOR_MOON    = rgb565(160, 216, 255);
 constexpr uint16_t COLOR_SEGMENT = rgb565(40, 90, 130);
@@ -208,6 +211,7 @@ void setDashed(ClockData& d, const MoonEvent& e, int today) {
 constexpr time_t MOON_SYMBOL_INTERVAL = 5 * 60;  // Sekunden
 
 bool needsFullRedraw = true;
+bool telegramLost = false;  // Zustand der Verbindungsanzeige, wie zuletzt gezeichnet
 int lastDrawnDay = -1;
 ClockData lastDrawnData;
 time_t lastMoonSymbol = 0;
@@ -301,6 +305,13 @@ void drawOuterDial(Adafruit_GFX* gfx, const ClockData& d) {
 
 }
 
+// Die unteren 5 Pixel der Tagesgrenze (0 Uhr) sind weiß, wenn die Verbindung zu Telegram fehlt.
+void drawConnectionMarker(Adafruit_GFX* gfx) {
+    constexpr int16_t LENGTH = 10;
+    const int16_t lineBottom = lroundf(CY + RING);
+    gfx->fillRect((int16_t) floorf(CX), lineBottom - LENGTH, 2, LENGTH, telegramLost ? COLOR_WHITE : COLOR_RING);
+}
+
 // Innerer Teil: Tagesgrenze, Ziffern und Zeiger. Mit nearHours >= 0 nur die Elemente in der Nähe
 // dieser Uhrzeit (nach dem Löschen des alten Stundenzeigers), sonst alle.
 void drawInnerDial(Adafruit_GFX* gfx, const ClockData& d, float nearHours) {
@@ -310,6 +321,7 @@ void drawInnerDial(Adafruit_GFX* gfx, const ClockData& d, float nearHours) {
     const int16_t lineBottom = lroundf(CY + RING);
     if (isNear(0.0f, nearHours)) {
         gfx->fillRect(midLeft, lineTop, 2, lineBottom - lineTop, COLOR_RING);
+        drawConnectionMarker(gfx);
     }
 
     // Ziffern
@@ -393,6 +405,9 @@ void drawClockFace(Adafruit_GFX* gfx, time_t now) {
     const ClockData d = computeClockData(now);
     const float nowHours = localHours(now);
     const bool moonUp = moonAboveHorizon(now);
+    const bool lost = telegramConnectionLost();
+    const bool lostChanged = lost != telegramLost;
+    telegramLost = lost;
 
     if (needsFullRedraw || cache.day != lastDrawnDay || !sameData(d, lastDrawnData)) {
         // Komplett neu: beim ersten Mal, bei Tageswechsel und wenn sich Zeiger oder Segment ändern
@@ -414,6 +429,7 @@ void drawClockFace(Adafruit_GFX* gfx, time_t now) {
             lastMoonSymbol = now;
             lastMoonUp = moonUp;
         }
+        if (lostChanged) drawConnectionMarker(gfx);
         // Alten Stundenzeiger löschen und nur die Elemente nachzeichnen, die er überdeckt haben kann
         if (lastNowHours >= 0.0f && lastNowHours != nowHours) {
             drawNowHand(gfx, lastNowHours, COLOR_BLACK);

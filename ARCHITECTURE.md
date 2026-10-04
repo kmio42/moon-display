@@ -156,6 +156,9 @@ Gezeichnet wird inkrementell, weil das komplette Zifferblatt auf dem Gerät spü
 - **Minütlich** wird nur der alte Stundenzeiger schwarz übermalt, die Elemente in seiner Nähe werden
   neu gezeichnet (`NEAR_HOURS`), und der neue Zeiger wird gesetzt.
 - **Mondsymbol** alle 5 Minuten und beim Horizontdurchgang (Tönung).
+- **Telegram-Verbindung:** Die unteren 5 Pixel der 0-Uhr-Markierung sind weiß, wenn Telegram eingerichtet,
+  aber nicht erreichbar ist. Die Uhr fragt dazu `telegramConnectionLost()` aus
+  [Telegram.ino](src/Telegram.ino) ab; ändert sich der Zustand, werden nur diese Pixel neu gezeichnet.
 
 Ring und Mondsegment werden pixelweise um den echten Mittelpunkt (119,5 | 119,5) gezeichnet, damit
 sie rund und symmetrisch sind. Dicke Linien setzen sich aus zwei Dreiecken zusammen, weil
@@ -164,6 +167,12 @@ Adafruit_GFX keine dicken Linien kennt. Senkrechte und waagerechte Linien sind R
 ## Telegram und Pushover
 
 [Telegram.ino](src/Telegram.ino) pollt alle 3 Sekunden ohne Long-Polling, damit die Anzeige weiterläuft.
+
+**Verbindungsstatus:** `updateTelegramConnection()` prüft mit `getMe`, ob Telegram erreichbar ist,
+bei bestehender Verbindung einmal pro Minute, sonst alle 10 Sekunden; ohne WLAN gilt Telegram als nicht
+erreichbar. `getUpdates` taugt dafür nicht, weil es „keine neuen Nachrichten“ und „keine Verbindung“
+beide mit 0 beantwortet. Die Uhr zeigt den Zustand an (siehe Uhren-Modus). Ist Telegram nicht
+eingerichtet, gilt die Verbindung nicht als verloren.
 
 **Wer darf was:**
 
@@ -227,7 +236,8 @@ Ersatz für die Arduino-Header, und `Adafruit_GFX` zeichnet in einen Speicherpuf
 Der Aufruf (`make clock`, `make moon`) steht im [Makefile](Makefile) und in der readme.md.
 
 So lässt sich Zeichencode ändern und prüfen, ohne jedes Mal zu flashen. Der Preview-Code ersetzt
-nur `utcToLocal()` und die Konfigurationsvariablen aus [Config.ino](src/Config.ino).
+nur `utcToLocal()`, `telegramConnectionLost()` und die Konfigurationsvariablen aus
+[Config.ino](src/Config.ino).
 
 ## Erweitern
 

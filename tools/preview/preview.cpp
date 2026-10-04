@@ -23,6 +23,11 @@ double configLongitude = 8.65;
 int    configDisplayOptions = 13;
 static std::string tzName = "CET-1CEST,M3.5.0,M10.5.0/3";
 
+static bool telegramLost = false;
+bool telegramConnectionLost() {
+    return telegramLost;
+}
+
 void utcToLocal(time_t t, struct tm& out) {
     localtime_r(&t, &out);
 }
@@ -59,6 +64,7 @@ static void usage() {
         "      --lat B --lon L             Standort in Dezimalgrad (Standard Darmstadt)\n"
         "      --tz POSIX-TZ               Zeitzone (Standard CET-1CEST,M3.5.0,M10.5.0/3)\n"
         "      --square                    clock: keine runde Maske außen\n"
+        "      --no-telegram               clock: Telegram-Verbindung fehlt (weiße Markierung)\n"
         "  -f, --file DATEI                Ausgabedatei (Standard moon.png bzw. clock.png)\n");
 }
 
@@ -79,6 +85,7 @@ int main(int argc, char** argv) {
         else if (a == "--lon" && hasValue)                 configLongitude = atof(argv[++i]);
         else if (a == "--tz" && hasValue)                  tzName = argv[++i];
         else if (a == "--square")                          roundMask = false;
+        else if (a == "--no-telegram")                     telegramLost = true;
         else if ((a == "-f" || a == "--file") && hasValue) file = argv[++i];
         else { usage(); return 1; }
     }

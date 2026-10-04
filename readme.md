@@ -153,7 +153,7 @@ By default the moon is shown as seen in the sky, with the zenith up. With bit 4 
 * Light blue hands: moonrise and moonset; the light blue segment at the rim shows when the moon is above the horizon
 * Dashed light blue hand with `+1`/`-1`: the next event of the current or upcoming moon passage that falls on the next or previous day (at most one)
 * Red hand: current time
-* Grey line at the bottom: day boundary (midnight)
+* Grey line at the bottom: day boundary (midnight); its lowest 5 pixels turn white while Telegram is configured but not reachable
 * Centre: current moon, rendered like the moon display
 
 ![24-hour clock mode](clockmode.png)
@@ -164,7 +164,7 @@ By default the moon is shown as seen in the sky, with the zenith up. With bit 4 
 make clock ARGS='-t "2026-10-04 18:30" -o 9'
 make moon  ARGS='--lat 52.5 --lon 13.4 -t "2026-12-24 20:00" -f weihnachten.png'
 ```
-Options: `-t` local time (`-u`: UTC; default now), `-o` display options bitmask (default 13), `--lat`/`--lon` location (default Darmstadt), `--tz` POSIX time zone, `--square` (clock without round mask), `-f` output file. The tool is in `tools/preview/`.
+Options: `-t` local time (`-u`: UTC; default now), `-o` display options bitmask (default 13), `--lat`/`--lon` location (default Darmstadt), `--tz` POSIX time zone, `--square` (clock without round mask), `--no-telegram` (clock with the white "Telegram not reachable" marker), `-f` output file. The tool is in `tools/preview/`.
 
 ## Hardware
 * ESP32-C3 Super Mini

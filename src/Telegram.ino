@@ -62,6 +62,10 @@ static WiFiClientSecure telegramClient;
 static UniversalTelegramBot bot(TELEGRAM_BOT_TOKEN, telegramClient);
 static bool telegramEnabled = false;
 static bool telegramCommandsSet = false;
+static bool telegramOnline = false;          // Ergebnis der letzten Verbindungsprüfung
+static unsigned long lastTelegramProbe = 0;
+constexpr unsigned long TELEGRAM_PROBE_ONLINE  = 60000;  // ms, Prüfabstand bei bestehender Verbindung
+constexpr unsigned long TELEGRAM_PROBE_OFFLINE = 10000;  // ms, bis zur Wiederherstellung
 static unsigned long lastTelegramPoll = 0;
 static int lastReportDay = -1;     // Lokaler Tag (Jahr*1000 + Tag im Jahr) des letzten Tagesberichts über Telegram
 static int lastPushoverDay = -1;   // dito über Pushover
@@ -705,6 +709,19 @@ static String handleCommand(String text, const String& chatId) {
 
 // ── Setup & Loop ─────────────────────────────────────────────────────────────
 
+// Für die Uhr: Telegram ist eingerichtet, aber nicht erreichbar.
+bool telegramConnectionLost() {
+    return telegramEnabled && !telegramOnline;
+}
+
+// Prüft die Verbindung mit getMe, bei bestehender Verbindung nur gelegentlich.
+static void updateTelegramConnection() {
+    const unsigned long interval = telegramOnline ? TELEGRAM_PROBE_ONLINE : TELEGRAM_PROBE_OFFLINE;
+    if (lastTelegramProbe != 0 && millis() - lastTelegramProbe < interval) return;
+    lastTelegramProbe = millis();
+    telegramOnline = bot.getMe();
+}
+
 void setupTelegram() {
     telegramEnabled = strlen(TELEGRAM_BOT_TOKEN) > 0 && strlen(TELEGRAM_CHAT_ID) > 0;
     if (!telegramEnabled) {
@@ -716,7 +733,11 @@ void setupTelegram() {
 }
 
 void handleTelegram() {
-    if (WiFi.status() != WL_CONNECTED) return;
+    if (WiFi.status() != WL_CONNECTED) {
+        telegramOnline = false;
+        lastTelegramProbe = 0;  // nach dem WLAN-Aufbau sofort prüfen
+        return;
+    }
     if (millis() - lastTelegramPoll < TELEGRAM_POLL_INTERVAL) return;
     lastTelegramPoll = millis();
 
@@ -724,9 +745,10 @@ void handleTelegram() {
     checkAutoReport();
     if (!telegramEnabled) return;
 
+    updateTelegramConnection();
     if (!telegramCommandsSet) {
-        // Eigener Benutzername, um in Gruppen "/befehl@AndererBot" zu erkennen
-        telegramCommandsSet = bot.getMe() && bot.setMyCommands(BOT_COMMANDS);
+        // getMe (oben) liefert auch den eigenen Benutzernamen, um in Gruppen "/befehl@AndererBot" zu erkennen
+        telegramCommandsSet = telegramOnline && bot.setMyCommands(BOT_COMMANDS);
         if (telegramCommandsSet) Serial.printf("Telegram bereit (@%s).\n", bot.userName.c_str());
     }
 
