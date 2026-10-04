@@ -158,6 +158,14 @@ By default the moon is shown as seen in the sky, with the zenith up. With bit 4 
 
 ![24-hour clock mode](clockmode.png)
 
+## Image preview on the PC
+`make clock` and `make moon` render the 24-hour clock and the moon image to PNG files (`clock.png`, `moon.png`, 240×240) without the device, using the unchanged project code. This needs `g++`, `make` and the Adafruit GFX library, which `pio run` fetches once into `.pio/libdeps`.
+```
+make clock ARGS='-t "2026-10-04 18:30" -o 9'
+make moon  ARGS='--lat 52.5 --lon 13.4 -t "2026-12-24 20:00" -f weihnachten.png'
+```
+Options: `-t` local time (`-u`: UTC; default now), `-o` display options bitmask (default 13), `--lat`/`--lon` location (default Darmstadt), `--tz` POSIX time zone, `--square` (clock without round mask), `-f` output file. The tool is in `tools/preview/`.
+
 ## Hardware
 * ESP32-C3 Super Mini
 * 1.28 inch round IPS display (GC9A01)

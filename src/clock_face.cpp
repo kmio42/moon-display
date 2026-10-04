@@ -15,11 +15,12 @@ namespace {
 
 constexpr float CX = 119.5f;            // Mittelpunkt des 240×240-Displays
 constexpr float CY = 119.5f;
-constexpr float RING = 118.0f;          // Außenring
+constexpr float RING = 118.0f;          // Außenring (Radius der äußersten Pixelmitten)
+constexpr float RING_WIDTH = 2.0f;      // Dicke des grauen Rings in Pixeln
 constexpr float SEGMENT_WIDTH = 14.0f;  // Breite des Mondsegments
-constexpr float HAND_START = 62.0f;     // Zeiger beginnen außerhalb des Mondsymbols
+constexpr float HAND_START = 58.0f;     // Zeiger beginnen außerhalb des Mondsymbols
 constexpr float RED_HAND_END = RING - 34.0f;
-constexpr float DIGIT_RADIUS = RING - 28.0f;
+constexpr float DIGIT_RADIUS = RING - 24.0f;
 constexpr float LABEL_RADIUS = RING - 24.0f;
 constexpr int   MOON_SYMBOL_RADIUS = 55;
 
@@ -54,6 +55,16 @@ void thickLine(Adafruit_GFX* gfx, float x0, float y0, float x1, float y1, float 
         gfx->drawLine(lroundf(x0), lroundf(y0), lroundf(x1), lroundf(y1), color);
         return;
     }
+    // Senkrechte und waagerechte Linien als Rechteck: die Dreiecke unten lassen an den Enden
+    // einzelne Pixel stehen oder fehlen, was bei 0, 6, 12 und 18 Uhr als Knick auffällt.
+    if (fabsf(dx) < 0.01f || fabsf(dy) < 0.01f) {
+        const int16_t left   = lroundf(fminf(x0, x1) - (fabsf(dx) < 0.01f ? w * 0.5f : 0.0f));
+        const int16_t right  = lroundf(fmaxf(x0, x1) + (fabsf(dx) < 0.01f ? w * 0.5f : 0.0f));
+        const int16_t top    = lroundf(fminf(y0, y1) - (fabsf(dy) < 0.01f ? w * 0.5f : 0.0f));
+        const int16_t bottom = lroundf(fmaxf(y0, y1) + (fabsf(dy) < 0.01f ? w * 0.5f : 0.0f));
+        gfx->fillRect(left, top, right - left + 1, bottom - top + 1, color);
+        return;
+    }
     const float nx = -dy / len * w * 0.5f;
     const float ny =  dx / len * w * 0.5f;
     const int16_t ax = lroundf(x0 + nx), ay = lroundf(y0 + ny);
@@ -79,22 +90,36 @@ void dashedRadialLine(Adafruit_GFX* gfx, float hours, float r0, float r1, float 
     }
 }
 
-// Ringsegment zwischen den Uhrzeiten h0 und h1 (h0 < h1, beide in 0..24)
+// Füllt das Ringsegment zwischen den Uhrzeiten h0 und h1 (h0 < h1, beide in 0..24) pixelweise:
+// gezeichnet werden alle Pixel, deren Mittelpunkt vom Zifferblattmittelpunkt (CX, CY) einen Abstand
+// größer rIn und höchstens rOut hat. Das ist exakt rund und ohne Rundungsfehler von Teilstücken;
+// zusammenhängende Pixel einer Zeile werden als eine Linie gezeichnet.
 void arcSegment(Adafruit_GFX* gfx, float h0, float h1, float rIn, float rOut, uint16_t color) {
-    constexpr float STEP = 0.1f;  // Stunden je Teilstück (1,5°)
-    const int steps = (int) ceilf((h1 - h0) / STEP);
-    if (steps <= 0) return;
-    float ox0, oy0, ix0, iy0;
-    polar(h0, rOut, ox0, oy0);
-    polar(h0, rIn, ix0, iy0);
-    for (int i = 1; i <= steps; i++) {
-        const float h = h0 + (h1 - h0) * i / steps;
-        float ox1, oy1, ix1, iy1;
-        polar(h, rOut, ox1, oy1);
-        polar(h, rIn, ix1, iy1);
-        gfx->fillTriangle(lroundf(ox0), lroundf(oy0), lroundf(ix0), lroundf(iy0), lroundf(ix1), lroundf(iy1), color);
-        gfx->fillTriangle(lroundf(ox0), lroundf(oy0), lroundf(ix1), lroundf(iy1), lroundf(ox1), lroundf(oy1), color);
-        ox0 = ox1; oy0 = oy1; ix0 = ix1; iy0 = iy1;
+    const bool full = h0 <= 0.0f && h1 >= 24.0f;
+    const float rIn2 = rIn * rIn;
+    const float rOut2 = rOut * rOut;
+    for (int16_t y = (int16_t) ceilf(CY - rOut); y <= (int16_t) floorf(CY + rOut); y++) {
+        const float dy = y - CY;
+        if (dy * dy > rOut2) continue;
+        const float xo = sqrtf(rOut2 - dy * dy);
+        int16_t runStart = -1;
+        for (int16_t x = (int16_t) ceilf(CX - xo); x <= (int16_t) floorf(CX + xo) + 1; x++) {
+            const float dx = x - CX;
+            const float d2 = dx * dx + dy * dy;
+            bool inside = x <= (int16_t) floorf(CX + xo) && d2 > rIn2 && d2 <= rOut2;
+            if (inside && !full) {
+                // Uhrzeit des Pixels: Winkel von oben ist 180° + Stunde * 15°
+                float h = fmodf(atan2f(dx, -dy) * 180.0f / (float) M_PI - 180.0f, 360.0f) / 15.0f;
+                if (h < 0.0f) h += 24.0f;
+                inside = h >= h0 && h <= h1;
+            }
+            if (inside && runStart < 0) {
+                runStart = x;
+            } else if (!inside && runStart >= 0) {
+                gfx->drawFastHLine(runStart, y, x - runStart, color);
+                runStart = -1;
+            }
+        }
     }
 }
 
@@ -242,15 +267,16 @@ bool isNear(float hours, float nearHours) {
 // Äußerer Teil: Segment, Ring und Striche. Liegt außerhalb der Reichweite des Stundenzeigers.
 void drawOuterDial(Adafruit_GFX* gfx, const ClockData& d) {
     const float segIn = RING - SEGMENT_WIDTH;
+    const float segOut = RING - RING_WIDTH;  // das Segment endet am Innenrand des Rings
 
     // Mondsegment (Kalendertag)
     if (d.moonUpAllDay) {
-        arcSegment(gfx, 0.0f, 24.0f, segIn, RING, COLOR_SEGMENT);
+        arcSegment(gfx, 0.0f, 24.0f, segIn, segOut, COLOR_SEGMENT);
     } else if (d.hasMoonrise && d.hasMoonset && d.moonrise < d.moonset) {
-        arcSegment(gfx, d.moonrise, d.moonset, segIn, RING, COLOR_SEGMENT);
+        arcSegment(gfx, d.moonrise, d.moonset, segIn, segOut, COLOR_SEGMENT);
     } else {
-        if (d.hasMoonset)  arcSegment(gfx, 0.0f, d.moonset, segIn, RING, COLOR_SEGMENT);
-        if (d.hasMoonrise) arcSegment(gfx, d.moonrise, 24.0f, segIn, RING, COLOR_SEGMENT);
+        if (d.hasMoonset)  arcSegment(gfx, 0.0f, d.moonset, segIn, segOut, COLOR_SEGMENT);
+        if (d.hasMoonrise) arcSegment(gfx, d.moonrise, 24.0f, segIn, segOut, COLOR_SEGMENT);
     }
 
     // Tagesgrenze (0 Uhr) liegt senkrecht unter der Mitte, zwischen den Pixelspalten 119 und 120.
@@ -262,10 +288,7 @@ void drawOuterDial(Adafruit_GFX* gfx, const ClockData& d) {
     gfx->fillRect(midLeft - 2, segTop, 6, ringInner - segTop + 1, COLOR_BLACK);
 
     // Ring
-    const int16_t cx = lroundf(CX);
-    const int16_t cy = lroundf(CY);
-    gfx->drawCircle(cx, cy, lroundf(RING), COLOR_RING);
-    gfx->drawCircle(cx, cy, lroundf(RING) - 1, COLOR_RING);
+    arcSegment(gfx, 0.0f, 24.0f, RING - RING_WIDTH, RING, COLOR_RING);
 
     // Stundenstriche (0 Uhr ist die Tagesgrenze)
     for (int h = 1; h < 24; h++) {
