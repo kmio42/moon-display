@@ -17,11 +17,11 @@ constexpr float CX = 119.5f;            // Mittelpunkt des 240×240-Displays
 constexpr float CY = 119.5f;
 constexpr float RING = 118.0f;          // Außenring
 constexpr float SEGMENT_WIDTH = 14.0f;  // Breite des Mondsegments
-constexpr float HAND_START = 40.0f;     // Zeiger beginnen außerhalb des Mondsymbols
+constexpr float HAND_START = 62.0f;     // Zeiger beginnen außerhalb des Mondsymbols
 constexpr float RED_HAND_END = RING - 34.0f;
 constexpr float DIGIT_RADIUS = RING - 28.0f;
 constexpr float LABEL_RADIUS = RING - 24.0f;
-constexpr int   MOON_SYMBOL_RADIUS = 35;
+constexpr int   MOON_SYMBOL_RADIUS = 55;
 
 constexpr uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
     return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
