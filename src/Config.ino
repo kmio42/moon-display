@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <time.h>
+#include <string.h>
 
 #include "display_mode.h"
 
@@ -45,18 +46,38 @@ void saveConfig() {
     prefs.end();
 }
 
-// Wandelt eine UTC-Zeit in Lokalzeit (configTimezone) um.
-// Die System-Zeitzone wird nur kurz umgestellt und danach wieder auf UTC gesetzt.
-void utcToLocal(time_t t, struct tm& out) {
-    setenv("TZ", configTimezone.c_str(), 1);
-    tzset();
-    localtime_r(&t, &out);
-    setenv("TZ", "UTC0", 1);
+// Länge eines TZ-Strings einschließlich Nullbyte
+constexpr size_t TZ_CAPACITY = 64;
+static char* tzBuffer = nullptr;
+
+// Setzt die System-Zeitzone. setenv() in newlib gibt den alten Wert nicht frei, wenn der neue
+// länger ist; beim ständigen Wechsel zwischen configTimezone und "UTC0" ging so bei jedem Aufruf ein
+// Puffer verloren, bis der Heap leer war. Deshalb bekommt TZ einmal einen Puffer mit TZ_CAPACITY
+// Zeichen, der danach nur noch überschrieben wird. Hat jemand anderes TZ neu gesetzt (configTime),
+// wird der Puffer neu angelegt.
+static void setTimezone(const char* tz) {
+    if (tzBuffer == nullptr || getenv("TZ") != tzBuffer) {
+        char placeholder[TZ_CAPACITY];
+        memset(placeholder, 'x', TZ_CAPACITY - 1);
+        placeholder[TZ_CAPACITY - 1] = '\0';
+        setenv("TZ", placeholder, 1);
+        tzBuffer = getenv("TZ");
+    }
+    strlcpy(tzBuffer, tz, TZ_CAPACITY);
     tzset();
 }
 
-// Prüft, ob der POSIX-TZ-String plausibel ist (Name mit mindestens 3 Buchstaben + Offset).
+// Wandelt eine UTC-Zeit in Lokalzeit (configTimezone) um.
+// Die System-Zeitzone wird nur kurz umgestellt und danach wieder auf UTC gesetzt.
+void utcToLocal(time_t t, struct tm& out) {
+    setTimezone(configTimezone.c_str());
+    localtime_r(&t, &out);
+    setTimezone("UTC0");
+}
+
+// Prüft, ob der POSIX-TZ-String plausibel ist (Name mit mindestens 3 Buchstaben + Offset, kürzer als TZ_CAPACITY).
 bool isValidTimezone(const char* tz) {
+    if (strlen(tz) >= TZ_CAPACITY) return false;
     int letters = 0;
     const char* p = tz;
     if (*p == '<') {

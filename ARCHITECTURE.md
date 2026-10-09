@@ -85,7 +85,9 @@ die Systemzeit vor 2023. Alle Teile prüfen das (`MIN_VALID_TIME`) und warten.
 - Das System läuft in **UTC** (`TZ=UTC0`). Alle Berechnungen in `astro` und `ephemeris` nutzen UT.
 - Erst die Ausgabe wird in die Lokalzeit umgerechnet, mit `utcToLocal()` in
   [Config.ino](src/Config.ino) und dem POSIX-String `configTimezone`. Die Funktion stellt `TZ` nur
-  kurz um und setzt es danach wieder auf UTC.
+  kurz um und setzt es danach wieder auf UTC. `TZ` wird dabei nicht mit `setenv()` gesetzt, sondern
+  in einem einmal angelegten Puffer überschrieben (`setTimezone()`): newlib gibt bei `setenv()` den
+  alten Wert nicht frei, wenn der neue länger ist, und der ständige Wechsel hat so den Heap geleert.
 - Tageswerte (Sonnenauf-/-untergang, Mondereignisse, Tagesbericht) gelten für den **lokalen
   Kalendertag**. `eventsForLocalDay()` berechnet die Ereignisse der UT-Tage, die den lokalen Tag
   überlappen, und filtert sie nach lokalem Datum.
