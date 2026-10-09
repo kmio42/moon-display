@@ -63,7 +63,6 @@ In the group the bot only reacts to commands sent by the user `TELEGRAM_CHAT_ID`
 | `/sonne` | Current sun coordinates: RA/Dec, azimuth/altitude |
 | `/bericht` | Send the daily report now (also to Pushover, if configured) |
 | `/config` | Show current configuration |
-| `/status` | Uptime, last reset reason, free heap, WiFi and the last Telegram outage |
 | `/standort <lat> <lon>` | Set observer location in decimal degrees |
 | `/optionen <value>` | Set display options bitmask (see below) |
 | `/auto on\|off` | Enable or disable the daily report (auto mode) |
