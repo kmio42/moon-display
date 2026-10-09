@@ -225,6 +225,9 @@ static String buildMoonMessage() {
     char buf[64];
     String msg = String(moonPhaseEmoji(sky.phase, sky.waxing)) + " Mond – " + formatNow() + "\n\n";
     msg += "RA / Dek: " + formatRa(sky.moonRaDek.ra) + " / " + formatDeg(sky.moonRaDek.dek) + "\n";
+    snprintf(buf, sizeof(buf), "Ekl. Länge / Breite: %.2f° / ",
+             fmod(sky.moon.longitude * astro::RAD2DEG + 360.0, 360.0));
+    msg += buf + formatDeg(sky.moon.latitude) + "\n";
     msg += "Azimut / Höhe: " + formatAzimut(sky.moonAzH.azimut) + " / " + formatDeg(sky.moonAzH.height) + "\n";
     snprintf(buf, sizeof(buf), "Entfernung: %.0f km\n", sky.moon.distance);
     msg += buf;

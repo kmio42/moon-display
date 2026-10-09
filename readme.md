@@ -57,7 +57,7 @@ In the group the bot only reacts to commands sent by the user `TELEGRAM_CHAT_ID`
 
 | Command | Description |
 |---|---|
-| `/mond` | Current moon coordinates: RA/Dec, azimuth/altitude, distance, phase, libration |
+| `/mond` | Current moon coordinates: RA/Dec, ecliptic longitude/latitude, azimuth/altitude, distance, phase, libration |
 | `/bild` | Current moon image as shown on the display (PNG) |
 | `/profilbild` | Update the bot's profile photo (and the group photo) now |
 | `/sonne` | Current sun coordinates: RA/Dec, azimuth/altitude |
