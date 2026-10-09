@@ -182,7 +182,9 @@ Antworten und nimmt Updates bis 4000 Byte an.
 **Diagnose:** Jeder Wechsel online/offline wird seriell protokolliert, mit WLAN-Status, RSSI, freiem
 Heap, größtem freien Block und letztem TLS-Fehler. `/status` zeigt Laufzeit, Neustartgrund, Heap,
 WLAN und den letzten Ausfall. Nach einem Neustart durch Absturz, Watchdog oder Unterspannung meldet
-der Bot das einmal im privaten Chat.
+der Bot das einmal im privaten Chat. Der Heap-Stand wird jede Minute seriell ausgegeben und im
+RTC-Speicher (`RTC_NOINIT_ATTR`) abgelegt, der Abstürze übersteht; `/status` und die Absturzmeldung
+zeigen so auch den Stand vor dem Neustart.
 
 **Unlesbare Updates:** Kann die Library ein Update nicht parsen (z. B. zu groß), liefert
 `getUpdates` 0, ohne den Offset weiterzurücken, und alle folgenden Nachrichten hängen.

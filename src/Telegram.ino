@@ -639,6 +639,47 @@ static bool abnormalReset() {
     }
 }
 
+// Heap-Stand, jede Minute aktualisiert. Liegt im RTC-Speicher, der Software-Resets und Abstürze
+// übersteht (nicht aber das Ausschalten), damit nach einem Absturz bekannt ist, wie es vorher stand.
+struct HeapRecord {
+    uint32_t magic;
+    uint32_t uptime;    // s
+    uint32_t freeHeap;
+    uint32_t maxBlock;  // größter freier Block
+    uint32_t minFree;   // Minimum seit dem Start
+
+    String describe() const {
+        char buf[96];
+        snprintf(buf, sizeof(buf), "Heap frei %u B, größter Block %u B, Minimum %u B",
+                 (unsigned) freeHeap, (unsigned) maxBlock, (unsigned) minFree);
+        return "Laufzeit " + formatDuration(uptime) + ", " + buf;
+    }
+};
+constexpr uint32_t HEAP_RECORD_MAGIC = 0x4d4f4e44;  // "MOND"
+constexpr unsigned long HEAP_LOG_INTERVAL = 60000;  // ms
+static RTC_NOINIT_ATTR HeapRecord heapRecord;
+static HeapRecord heapBeforeReset;  // Stand vor dem letzten Neustart, magic 0: unbekannt
+static unsigned long lastHeapLog = 0;
+
+// Übernimmt den Heap-Stand des vorigen Laufs; einmal beim Start aufrufen.
+static void takeHeapRecordBeforeReset() {
+    heapBeforeReset = heapRecord;
+    if (esp_reset_reason() == ESP_RST_POWERON || heapBeforeReset.magic != HEAP_RECORD_MAGIC) {
+        heapBeforeReset.magic = 0;  // nach dem Einschalten ist der RTC-Speicher zufällig belegt
+    }
+    heapRecord.magic = 0;
+    if (heapBeforeReset.magic != 0) Serial.println("Vor dem Neustart: " + heapBeforeReset.describe());
+}
+
+// Schreibt den Heap-Stand jede Minute seriell und in den RTC-Speicher.
+static void recordHeap() {
+    if (lastHeapLog != 0 && millis() - lastHeapLog < HEAP_LOG_INTERVAL) return;
+    lastHeapLog = millis();
+    heapRecord = {HEAP_RECORD_MAGIC, (uint32_t) uptimeSec(), (uint32_t) ESP.getFreeHeap(),
+                  (uint32_t) ESP.getMaxAllocHeap(), (uint32_t) ESP.getMinFreeHeap()};
+    Serial.println(heapRecord.describe());
+}
+
 // WLAN, Speicher und letzter TLS-Fehler, um Verbindungsausfälle einordnen zu können
 static String connectionDiagnostics() {
     char buf[200];
@@ -659,6 +700,7 @@ static String buildStatusMessage() {
     const uint64_t now = uptimeSec();
     String msg = "Laufzeit: " + formatDuration(now) + "\n";
     msg += String("Letzter Neustart: ") + resetReasonName() + "\n";
+    if (heapBeforeReset.magic != 0) msg += "Davor: " + heapBeforeReset.describe() + "\n";
     char buf[96];
     snprintf(buf, sizeof(buf), "Heap: frei %u B, größter Block %u B, Minimum %u B\n",
              (unsigned) ESP.getFreeHeap(), (unsigned) ESP.getMaxAllocHeap(), (unsigned) ESP.getMinFreeHeap());
@@ -876,6 +918,7 @@ static void skipUnreadableUpdate() {
 
 void setupTelegram() {
     Serial.printf("Neustart: %s\n", resetReasonName());
+    takeHeapRecordBeforeReset();
     telegramEnabled = strlen(TELEGRAM_BOT_TOKEN) > 0 && strlen(TELEGRAM_CHAT_ID) > 0;
     if (!telegramEnabled) {
         Serial.println("Telegram: kein Token/Chat-ID in credentials.h, Bot deaktiviert.");
@@ -888,6 +931,7 @@ void setupTelegram() {
 }
 
 void handleTelegram() {
+    recordHeap();
     if (WiFi.status() != WL_CONNECTED) {
         if (telegramEnabled) setTelegramOnline(false);
         lastTelegramProbe = 0;  // nach dem WLAN-Aufbau sofort prüfen
@@ -912,7 +956,9 @@ void handleTelegram() {
             Serial.printf("Telegram bereit (@%s).\n", bot.userName.c_str());
             // Einmal nach dem Start: Neustarts durch Absturz, Watchdog oder Unterspannung melden
             if (abnormalReset()) {
-                bot.sendMessage(TELEGRAM_CHAT_ID, String("⚠️ Neustart nach ") + resetReasonName(), "");
+                String msg = String("⚠️ Neustart nach ") + resetReasonName();
+                if (heapBeforeReset.magic != 0) msg += "\nDavor: " + heapBeforeReset.describe();
+                bot.sendMessage(TELEGRAM_CHAT_ID, msg, "");
             }
         }
     }
