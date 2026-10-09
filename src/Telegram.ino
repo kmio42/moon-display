@@ -14,6 +14,8 @@
 #include <JPEGENC.h>
 #include <new>
 #include <time.h>
+#include <esp_system.h>
+#include <esp_timer.h>
 
 #include "astro.h"
 #include "ephemeris.h"
@@ -55,6 +57,8 @@ extern bool pushoverEnabled();
 extern bool sendPushover(const String& message, const String& title);
 
 constexpr unsigned long TELEGRAM_POLL_INTERVAL = 3000;  // ms
+constexpr unsigned int  TELEGRAM_WAIT_FOR_RESPONSE = 5000; // ms, Library-Standard 1500 ist bei langsamem Netz zu knapp
+constexpr int           TELEGRAM_MAX_MESSAGE_LENGTH = 4000; // Byte, Library-Standard 1500 reicht nicht für jedes Update
 constexpr time_t        MIN_VALID_TIME         = 1700000000; // Zeit gilt erst nach NTP-Sync als gültig
 constexpr unsigned long PUSHOVER_RETRY_INTERVAL = 5UL * 60 * 1000; // ms, schont das Nachrichtenkontingent
 
@@ -280,6 +284,7 @@ static const char HELP_TEXT[] =
     "/sonne – aktuelle Sonnenkoordinaten\n"
     "/bericht – Tagesbericht jetzt senden (auch an Pushover)\n"
     "/config – aktuelle Einstellungen\n"
+    "/status – Laufzeit, Speicher, WLAN und Verbindungsausfälle\n"
     "/standort <lat> <lon> – Standort in Dezimalgrad\n"
     "/optionen <wert> – Darstellung (Bits: 1=abdunkeln, 2=bläulich, 4=NASA-Textur, 8=Libration, 16=ohne parallakt. Winkel, 32=ohne Positionswinkel)\n"
     "/auto on|off – täglichen Bericht ein/aus\n"
@@ -297,6 +302,7 @@ static const char BOT_COMMANDS[] =
     "{\"command\":\"sonne\",\"description\":\"Aktuelle Sonnenkoordinaten\"},"
     "{\"command\":\"bericht\",\"description\":\"Tagesbericht jetzt senden\"},"
     "{\"command\":\"config\",\"description\":\"Aktuelle Einstellungen\"},"
+    "{\"command\":\"status\",\"description\":\"Laufzeit, Speicher, Verbindung\"},"
     "{\"command\":\"standort\",\"description\":\"Standort setzen: <lat> <lon>\"},"
     "{\"command\":\"optionen\",\"description\":\"Darstellungsoptionen setzen: <wert>\"},"
     "{\"command\":\"auto\",\"description\":\"Täglichen Bericht ein/aus: on|off\"},"
@@ -572,6 +578,100 @@ static void checkAutoReport() {
     }
 }
 
+// ── Diagnose ─────────────────────────────────────────────────────────────────
+
+// Zeiten in Sekunden Laufzeit (esp_timer läuft anders als millis() nicht nach 49 Tagen über)
+static uint64_t telegramOfflineSince = 0;  // Beginn des laufenden bzw. letzten Ausfalls
+static uint64_t lastOutageEnd = 0;         // Ende des letzten Ausfalls
+static uint64_t lastOutageLength = 0;
+static int telegramOutages = 0;            // Verbindungsausfälle seit dem Start
+static String lastOutageInfo;              // Zustand beim Beginn des letzten Ausfalls
+
+static uint64_t uptimeSec() {
+    return esp_timer_get_time() / 1000000;
+}
+
+// Formatiert eine Dauer als "42 s", "03:15 h" oder "2 d 03:15 h".
+static String formatDuration(uint64_t sec) {
+    char buf[24];
+    if (sec < 60) {
+        snprintf(buf, sizeof(buf), "%u s", (unsigned) sec);
+    } else if (sec < 86400) {
+        snprintf(buf, sizeof(buf), "%02u:%02u h", (unsigned) (sec / 3600), (unsigned) (sec / 60 % 60));
+    } else {
+        snprintf(buf, sizeof(buf), "%u d %02u:%02u h", (unsigned) (sec / 86400), (unsigned) (sec / 3600 % 24),
+                 (unsigned) (sec / 60 % 60));
+    }
+    return buf;
+}
+
+static const char* resetReasonName() {
+    switch (esp_reset_reason()) {
+        case ESP_RST_POWERON:    return "Einschalten";
+        case ESP_RST_EXT:        return "Reset-Pin";
+        case ESP_RST_SW:         return "Software";
+        case ESP_RST_PANIC:      return "Absturz (Panic)";
+        case ESP_RST_INT_WDT:    return "Interrupt-Watchdog";
+        case ESP_RST_TASK_WDT:   return "Task-Watchdog";
+        case ESP_RST_WDT:        return "Watchdog";
+        case ESP_RST_DEEPSLEEP:  return "Deep Sleep";
+        case ESP_RST_BROWNOUT:   return "Unterspannung (Brownout)";
+        case ESP_RST_USB:        return "USB";
+        case ESP_RST_PWR_GLITCH: return "Spannungseinbruch";
+        case ESP_RST_CPU_LOCKUP: return "CPU blockiert";
+        default:                 return "unbekannt";
+    }
+}
+
+// Neustart durch einen Fehler und nicht durch Einschalten, Reset-Taste oder Flashen
+static bool abnormalReset() {
+    switch (esp_reset_reason()) {
+        case ESP_RST_PANIC:
+        case ESP_RST_INT_WDT:
+        case ESP_RST_TASK_WDT:
+        case ESP_RST_WDT:
+        case ESP_RST_BROWNOUT:
+        case ESP_RST_PWR_GLITCH:
+        case ESP_RST_CPU_LOCKUP:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// WLAN, Speicher und letzter TLS-Fehler, um Verbindungsausfälle einordnen zu können
+static String connectionDiagnostics() {
+    char buf[200];
+    int n = snprintf(buf, sizeof(buf), "WLAN %s (%d dBm), Heap frei %u B, größter Block %u B",
+                     WiFi.status() == WL_CONNECTED ? "verbunden" : "getrennt", (int) WiFi.RSSI(),
+                     (unsigned) ESP.getFreeHeap(), (unsigned) ESP.getMaxAllocHeap());
+    char tls[80];
+    const int err = telegramClient.lastError(tls, sizeof(tls));
+    if (err < 0) {
+        snprintf(buf + n, sizeof(buf) - n, ", TLS-Fehler -0x%04X (%s)", -err, tls);
+    } else {
+        snprintf(buf + n, sizeof(buf) - n, ", kein TLS-Fehler");
+    }
+    return buf;
+}
+
+static String buildStatusMessage() {
+    const uint64_t now = uptimeSec();
+    String msg = "Laufzeit: " + formatDuration(now) + "\n";
+    msg += String("Letzter Neustart: ") + resetReasonName() + "\n";
+    char buf[96];
+    snprintf(buf, sizeof(buf), "Heap: frei %u B, größter Block %u B, Minimum %u B\n",
+             (unsigned) ESP.getFreeHeap(), (unsigned) ESP.getMaxAllocHeap(), (unsigned) ESP.getMinFreeHeap());
+    msg += buf;
+    msg += "WLAN: " + WiFi.SSID() + ", " + String(WiFi.RSSI()) + " dBm, IP " + WiFi.localIP().toString() + "\n";
+    msg += "Telegram-Ausfälle: " + String(telegramOutages);
+    if (telegramOutages > 0) {
+        msg += ", der letzte vor " + formatDuration(now - lastOutageEnd) + " für " + formatDuration(lastOutageLength);
+        msg += "\nZu Beginn: " + lastOutageInfo;
+    }
+    return msg;
+}
+
 // ── Befehle ──────────────────────────────────────────────────────────────────
 
 static String handleCommand(String text, const String& chatId) {
@@ -622,6 +722,9 @@ static String handleCommand(String text, const String& chatId) {
     }
     if (cmd == "/config") {
         return buildConfigMessage();
+    }
+    if (cmd == "/status") {
+        return buildStatusMessage();
     }
     if (cmd == "/standort") {
         const char* s = args.c_str();
@@ -714,15 +817,65 @@ bool telegramConnectionLost() {
     return telegramEnabled && !telegramOnline;
 }
 
+// Setzt den Verbindungszustand und protokolliert Ausfälle.
+static void setTelegramOnline(bool online) {
+    if (online == telegramOnline) return;
+    telegramOnline = online;
+    const uint64_t now = uptimeSec();
+    if (!online) {
+        telegramOutages++;
+        telegramOfflineSince = now;
+        lastOutageInfo = connectionDiagnostics();
+        Serial.println("Telegram: Verbindung verloren – " + lastOutageInfo);
+    } else if (telegramOutages > 0) {  // nicht beim ersten Verbinden nach dem Start
+        lastOutageEnd = now;
+        lastOutageLength = now - telegramOfflineSince;
+        Serial.println("Telegram: Verbindung wieder da nach " + formatDuration(lastOutageLength) + " – "
+                       + connectionDiagnostics());
+    }
+}
+
 // Prüft die Verbindung mit getMe, bei bestehender Verbindung nur gelegentlich.
-static void updateTelegramConnection() {
+// Gibt true zurück, wenn in diesem Durchlauf geprüft wurde.
+static bool updateTelegramConnection() {
     const unsigned long interval = telegramOnline ? TELEGRAM_PROBE_ONLINE : TELEGRAM_PROBE_OFFLINE;
-    if (lastTelegramProbe != 0 && millis() - lastTelegramProbe < interval) return;
+    if (lastTelegramProbe != 0 && millis() - lastTelegramProbe < interval) return false;
     lastTelegramProbe = millis();
-    telegramOnline = bot.getMe();
+    const bool ok = bot.getMe();
+    // Die Library schließt nur Verbindungen, die sie noch für offen hält. Nach einem Fehler immer
+    // schließen, damit der nächste Versuch sicher mit einer neuen Verbindung beginnt.
+    if (!ok) telegramClient.stop();
+    setTelegramOnline(ok);
+    return true;
+}
+
+// Ein Update, das die Library nicht lesen kann (z. B. größer als maxMessageLength), lässt
+// getUpdates 0 liefern, ohne den Offset weiterzurücken; es blockiert dann alle folgenden Nachrichten.
+// Steht dasselbe Update bei zwei Prüfungen im Abstand von TELEGRAM_PROBE_ONLINE noch an, wird es
+// übersprungen. Eine einzelne Prüfung reicht nicht, das Update kann auch gerade erst angekommen sein.
+static long pendingUpdateId = -1;
+
+static void skipUnreadableUpdate() {
+    String response = bot.sendGetToTelegram(
+        bot.buildCommand("getUpdates?limit=1&offset=" + String(bot.last_message_received + 1)));
+    telegramClient.stop();
+    const int pos = response.indexOf("\"update_id\":");
+    if (pos < 0) {
+        pendingUpdateId = -1;
+        return;
+    }
+    const long id = response.substring(pos + 12).toInt();
+    if (id != pendingUpdateId) {
+        pendingUpdateId = id;
+        return;
+    }
+    Serial.printf("Telegram: Update %ld nicht lesbar, wird übersprungen.\n", id);
+    bot.last_message_received = id;
+    pendingUpdateId = -1;
 }
 
 void setupTelegram() {
+    Serial.printf("Neustart: %s\n", resetReasonName());
     telegramEnabled = strlen(TELEGRAM_BOT_TOKEN) > 0 && strlen(TELEGRAM_CHAT_ID) > 0;
     if (!telegramEnabled) {
         Serial.println("Telegram: kein Token/Chat-ID in credentials.h, Bot deaktiviert.");
@@ -730,11 +883,13 @@ void setupTelegram() {
     }
     telegramClient.setCACert(TELEGRAM_CERTIFICATE_ROOT);
     bot.longPoll = 0;  // nicht blockieren, Display-Loop läuft weiter
+    bot.waitForResponse = TELEGRAM_WAIT_FOR_RESPONSE;
+    bot.maxMessageLength = TELEGRAM_MAX_MESSAGE_LENGTH;
 }
 
 void handleTelegram() {
     if (WiFi.status() != WL_CONNECTED) {
-        telegramOnline = false;
+        if (telegramEnabled) setTelegramOnline(false);
         lastTelegramProbe = 0;  // nach dem WLAN-Aufbau sofort prüfen
         return;
     }
@@ -745,11 +900,21 @@ void handleTelegram() {
     checkAutoReport();
     if (!telegramEnabled) return;
 
-    updateTelegramConnection();
+    const bool probed = updateTelegramConnection();
+    if (!telegramOnline) {
+        checkMoonPhotos();
+        return;  // ohne Verbindung würde getUpdates nur bis zum Timeout warten
+    }
     if (!telegramCommandsSet) {
         // getMe (oben) liefert auch den eigenen Benutzernamen, um in Gruppen "/befehl@AndererBot" zu erkennen
-        telegramCommandsSet = telegramOnline && bot.setMyCommands(BOT_COMMANDS);
-        if (telegramCommandsSet) Serial.printf("Telegram bereit (@%s).\n", bot.userName.c_str());
+        telegramCommandsSet = bot.setMyCommands(BOT_COMMANDS);
+        if (telegramCommandsSet) {
+            Serial.printf("Telegram bereit (@%s).\n", bot.userName.c_str());
+            // Einmal nach dem Start: Neustarts durch Absturz, Watchdog oder Unterspannung melden
+            if (abnormalReset()) {
+                bot.sendMessage(TELEGRAM_CHAT_ID, String("⚠️ Neustart nach ") + resetReasonName(), "");
+            }
+        }
     }
 
     int count = bot.getUpdates(bot.last_message_received + 1);
@@ -773,6 +938,8 @@ void handleTelegram() {
         }
         count = bot.getUpdates(bot.last_message_received + 1);
     }
+    // Höchstens einmal pro TELEGRAM_PROBE_ONLINE, direkt nach dem leeren getUpdates
+    if (probed) skipUnreadableUpdate();
 
     checkMoonPhotos();
 }

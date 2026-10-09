@@ -173,6 +173,19 @@ bei bestehender Verbindung einmal pro Minute, sonst alle 10 Sekunden; ohne WLAN 
 erreichbar. `getUpdates` taugt dafür nicht, weil es „keine neuen Nachrichten“ und „keine Verbindung“
 beide mit 0 beantwortet. Die Uhr zeigt den Zustand an (siehe Uhren-Modus). Ist Telegram nicht
 eingerichtet, gilt die Verbindung nicht als verloren.
+Nach einer fehlgeschlagenen Prüfung wird der Client immer geschlossen, und ohne Verbindung fällt
+`getUpdates` aus, damit der Loop nicht auf Timeouts wartet. Die Library wartet 5 s statt 1,5 s auf
+Antworten und nimmt Updates bis 4000 Byte an.
+
+**Diagnose:** Jeder Wechsel online/offline wird seriell protokolliert, mit WLAN-Status, RSSI, freiem
+Heap, größtem freien Block und letztem TLS-Fehler. `/status` zeigt Laufzeit, Neustartgrund, Heap,
+WLAN und den letzten Ausfall. Nach einem Neustart durch Absturz, Watchdog oder Unterspannung meldet
+der Bot das einmal im privaten Chat.
+
+**Unlesbare Updates:** Kann die Library ein Update nicht parsen (z. B. zu groß), liefert
+`getUpdates` 0, ohne den Offset weiterzurücken, und alle folgenden Nachrichten hängen.
+`skipUnreadableUpdate()` holt deshalb nach jeder Verbindungsprüfung das nächste anstehende Update
+selbst; steht dieselbe `update_id` bei zwei Prüfungen hintereinander an, wird sie übersprungen.
 
 **Wer darf was:**
 
