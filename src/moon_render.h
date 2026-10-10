@@ -35,4 +35,9 @@ void prepareMoonRenderAt(const struct tm& utc, int options);
 // Außerhalb des Mondkreises schwarz.
 uint16_t moonPixel(int x, int y);
 
+// Farbe (RGB565) eines verkleinerten Bildpunkts aus den 2×2 Abtastpunkten (x0|x1, y0|y1) des Mondbilds:
+// Mondrand und Beleuchtung werden je Abtastpunkt geprüft, die Textur nur einmal in der Mitte
+// (Mittel aus 2×2 Texeln). Abtastpunkte außerhalb des Mondkreises zählen schwarz.
+uint16_t moonPixelAveraged(int x0, int y0, int x1, int y1);
+
 #endif // MOON_RENDER_H

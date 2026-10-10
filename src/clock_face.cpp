@@ -97,10 +97,24 @@ void dashedRadialLine(Adafruit_GFX* gfx, float hours, float r0, float r1, float 
 // gezeichnet werden alle Pixel, deren Mittelpunkt vom Zifferblattmittelpunkt (CX, CY) einen Abstand
 // größer rIn und höchstens rOut hat. Das ist exakt rund und ohne Rundungsfehler von Teilstücken;
 // zusammenhängende Pixel einer Zeile werden als eine Linie gezeichnet.
+// Ob ein Pixel zwischen h0 und h1 liegt, wird ohne Winkelfunktion je Pixel über die Seite
+// zu den Grenzstrahlen bestimmt (Vorzeichen von Kreuz- und Skalarprodukt).
 void arcSegment(Adafruit_GFX* gfx, float h0, float h1, float rIn, float rOut, uint16_t color) {
     const bool full = h0 <= 0.0f && h1 >= 24.0f;
     const float rIn2 = rIn * rIn;
     const float rOut2 = rOut * rOut;
+
+    // Richtung zur Uhrzeit h: (sin a, −cos a) mit a = 180° + h·15° (wie polar()), im Uhrzeigersinn.
+    // Für einen Pixel (dx, dy) gilt c·dx + s·dy = |p|·sin(aPixel − a): ≥ 0, wenn er im Uhrzeigersinn
+    // hinter dem Strahl liegt (bis 180°).
+    const float deg = (float) M_PI / 180.0f;
+    const float a0 = (180.0f + h0 * 15.0f) * deg;
+    const float a1 = (180.0f + h1 * 15.0f) * deg;
+    const float am = (a0 + a1) * 0.5f;                     // Mitte des Segments
+    const float s0 = sinf(a0), c0 = cosf(a0);
+    const float s1 = sinf(a1), c1 = cosf(a1);
+    const float sm = sinf(am), cm = cosf(am);
+    const bool wide = (h1 - h0) > 12.0f;                   // Segment größer als 180°
     for (int16_t y = (int16_t) ceilf(CY - rOut); y <= (int16_t) floorf(CY + rOut); y++) {
         const float dy = y - CY;
         if (dy * dy > rOut2) continue;
@@ -111,10 +125,13 @@ void arcSegment(Adafruit_GFX* gfx, float h0, float h1, float rIn, float rOut, ui
             const float d2 = dx * dx + dy * dy;
             bool inside = x <= (int16_t) floorf(CX + xo) && d2 > rIn2 && d2 <= rOut2;
             if (inside && !full) {
-                // Uhrzeit des Pixels: Winkel von oben ist 180° + Stunde * 15°
-                float h = fmodf(atan2f(dx, -dy) * 180.0f / (float) M_PI - 180.0f, 360.0f) / 15.0f;
-                if (h < 0.0f) h += 24.0f;
-                inside = h >= h0 && h <= h1;
+                const float afterStart = c0 * dx + s0 * dy;    // ≥ 0: hinter h0
+                const float beforeEnd  = c1 * dx + s1 * dy;    // ≤ 0: vor h1
+                const float towardMid  = sm * dx - cm * dy;    // ≥ 0: Seite der Segmentmitte
+                // Bis 180° liegt das Segment auf der Seite seiner Mitte; darüber ist es das
+                // Gegenstück zum (kleineren) Rest zwischen h1 und h0
+                inside = wide ? !(afterStart < 0.0f && beforeEnd > 0.0f && towardMid < 0.0f)
+                              : (afterStart >= 0.0f && beforeEnd <= 0.0f && towardMid >= 0.0f);
             }
             if (inside && runStart < 0) {
                 runStart = x;
@@ -238,19 +255,13 @@ void drawMoonSymbol(Adafruit_GFX* gfx, time_t now) {
     const int16_t cx = lroundf(CX);
     const int16_t cy = lroundf(CY);
     for (int y = -MOON_SYMBOL_RADIUS; y < MOON_SYMBOL_RADIUS; y++) {
+        const int y0 = (int) floorf((y + 0.25f) * scale);
+        const int y1 = (int) floorf((y + 0.75f) * scale);
         for (int x = -MOON_SYMBOL_RADIUS; x < MOON_SYMBOL_RADIUS; x++) {
             if (x * x + y * y > MOON_SYMBOL_RADIUS * MOON_SYMBOL_RADIUS) continue;
-            uint32_t r = 0, g = 0, b = 0;
-            for (int sy = 0; sy < 2; sy++) {
-                for (int sx = 0; sx < 2; sx++) {
-                    const uint16_t c = moonPixel((int) floorf((x + 0.25f + sx * 0.5f) * scale),
-                                                 (int) floorf((y + 0.25f + sy * 0.5f) * scale));
-                    r += (c >> 11) & 0x1F;
-                    g += (c >> 5) & 0x3F;
-                    b += c & 0x1F;
-                }
-            }
-            gfx->drawPixel(cx + x, cy + y, ((r / 4) << 11) | ((g / 4) << 5) | (b / 4));
+            const int x0 = (int) floorf((x + 0.25f) * scale);
+            const int x1 = (int) floorf((x + 0.75f) * scale);
+            gfx->drawPixel(cx + x, cy + y, moonPixelAveraged(x0, y0, x1, y1));
         }
     }
 }
