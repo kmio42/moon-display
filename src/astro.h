@@ -18,13 +18,13 @@
  * 11  Sternzeit in Greenwich                       11.1, 11.4                calculateGreenwichSiderealTime
  * 12  Umwandeln von Koordinaten                    12.3–12.6                 calculateEquatorial, calculateHorizontal
  * 13  Der parallaktische Winkel                    13.1                      calculateParallacticAngle
- * 14  Aufgang, Durchgang, Untergang (Sonne; h0)    14.1, 14.2                calculateSunriseSunset
+ * 14  Aufgang, Durchgang, Untergang (Sonne; h0)    14.1, 14.2                calculateSunRiseSet
  * 21  Schiefe der Ekliptik (ohne Nutation)         21.2                      calculateObliquity
- * 24  Koordinaten der Sonne (niedrige Genauigk.)   24.1–24.5                 calculateSunLongitude, calculateEarthSunDistance
+ * 24  Koordinaten der Sonne (niedrige Genauigk.)   24.1–24.5                 calculateSunPosition, calculateEarthEccentricity
  * 26  Äquinoktien und Solstitien                   Tab. 26.2, 26.3           calculateEquinoxSolstice
  * 27  Zeitgleichung (ohne Nutation)                27.1, 27.2                calculateEquationOfTime
  * 29  Keplergleichung                              29.1, 29.5                calculateEarthTrueAnomaly
- * 37  Planeten in Perihel und Aphel (nur Erde)                               calculateEarthApsis
+ * 37  Planeten in Perihel und Aphel (nur Erde)                               calculateNextEarthApsis
  * 39  Parallaxe                                    39.2, 39.3                calculateTopocentric
  * 45  Die Mondposition                             45.1–45.7, Tab. 45.1/45.2 calculateMoonPosition, calculateMoonAscendingNode
  * 46  Beleuchteter Teil der Mondscheibe            46.1–46.3                 calculateMoonIlluminatedFraction
@@ -76,6 +76,13 @@ constexpr double MOON_ORBIT_RADIUS = 384400.0;         // Mittlere Entfernung Er
 //  Datenstrukturen
 // ---------------------------------------------------------------
 
+// Ekliptikale Koordinaten, bezogen auf das mittlere Äquinoktium des Datums
+struct Ecliptic {
+    double longitude;       // Ekliptikale Länge λ [rad]
+    double latitude;        // Ekliptikale Breite β [rad]
+    double distance;        // Entfernung vom Bezugspunkt (geozentrisch: von der Erde) [km]
+};
+
 // Äquatoriale Koordinaten
 struct Equatorial {
     double ra;              // Rektaszension α [rad]
@@ -88,64 +95,46 @@ struct Horizontal {
     double altitude;        // Höhe h [rad]
 };
 
-// Geozentrische ekliptikale Position des Mondes
-struct MoonPosition {
-    double longitude;       // Ekliptikale Länge λ [rad]
-    double latitude;        // Ekliptikale Breite β [rad]
-    double distance;        // Entfernung Erde–Mond Δ [km]
-};
-
-// Libration des Mondes (Kapitel 51)
-struct Libration {
-    double longitude;       // Libration in Länge l [rad]
-    double latitude;        // Libration in Breite b [rad]
+// Selenografische Koordinaten (Kapitel 51), Länge positiv in Richtung Mare Crisium
+struct Selenographic {
+    double longitude;       // Selenografische Länge [rad], (−π, π]
+    double latitude;        // Selenografische Breite [rad]
 };
 
 // Orientierung des Mondes (Kapitel 51)
 struct MoonOrientation {
-    Libration libration;
-    double positionAngle;   // Positionswinkel der Mondachse P [rad]
+    Selenographic libration;    // Libration = selenografische Koordinaten der Erde
+    double positionAngle;       // Positionswinkel der Mondachse P [rad]
 };
 
-// Sonnenauf- und -untergang eines UT-Tags (Kapitel 14)
-struct SunriseSunset {
-    double transit;         // Meridiandurchgang [h UT]
+// Aufgang, Meridiandurchgang, Untergang und höchster Stand eines Himmelskörpers an einem UT-Tag
+struct RiseTransitSet {
+    bool   hasRise;         // Aufgang an diesem UT-Tag
+    bool   hasSet;          // Untergang an diesem UT-Tag
+    bool   hasTransit;      // Meridiandurchgang (Stundenwinkel 0) an diesem UT-Tag
+    bool   aboveAtStart;    // Um 0 h UT über der Standardhöhe h0
     double rise;            // Aufgang [h UT]
     double set;             // Untergang [h UT]
-    bool valid;             // false bei Polartag oder Polarnacht
+    double transit;         // Meridiandurchgang [h UT]
+    double maxAltitude;     // Höchste Höhe über der Standardhöhe h0 [rad]
+    double maxAltitudeTime; // Zeitpunkt der höchsten Höhe [h UT]
 };
 
-// Mondauf-/-untergang, Meridiandurchgang und höchster Stand eines UT-Tags.
-struct MoonRiseSet {
-    bool   hasRise;          // Aufgang an diesem UT-Tag
-    bool   hasSet;           // Untergang an diesem UT-Tag
-    bool   hasTransit;       // Meridiandurchgang (Stundenwinkel 0) an diesem UT-Tag
-    bool   aboveAtStart;     // Mond um 0 Uhr UT über dem Horizont
-    double riseHours;        // Aufgang [h UT]
-    double setHours;         // Untergang [h UT]
-    double transitHours;     // Meridiandurchgang [h UT]
-    double maxAltitude;      // Höchste Höhe über der Aufgangshöhe h0 [rad]
-    double maxAltitudeHours; // Zeitpunkt der höchsten Höhe [h UT]
+// Apsiden einer Bahn: Perigäum/Apogäum (Mond, Kapitel 48), Perihel/Aphel (Planeten, Kapitel 37)
+enum class ApsisType { Periapsis, Apoapsis };
+struct Apsis {
+    double jde;             // Zeitpunkt [JDE]; TD wird mit UT gleichgesetzt
+    double distance;        // Entfernung vom Zentralkörper [km]
 };
 
-// Perigäum/Apogäum des Mondes (Kapitel 48)
-enum class MoonApsisType { Perigee, Apogee };
-struct MoonApsis {
-    double jde;             // Zeitpunkt [JD]; TD wird mit UT gleichgesetzt
-    double distance;        // Entfernung Erde–Mond [km]
-};
-
-// Knotendurchgang des Mondes durch die Ekliptik (Kapitel 49)
-struct MoonNode {
-    double jde;             // Zeitpunkt [JD]; TD wird mit UT gleichgesetzt
+// Durchgang durch einen Knoten der Bahn (Mond: Kapitel 49, Planeten: Kapitel 38)
+struct NodePassage {
+    double jde;             // Zeitpunkt [JDE]; TD wird mit UT gleichgesetzt
     bool ascending;         // true: aufsteigender Knoten (Breite wird positiv)
 };
 
 // Solstitien und Äquinoktien (Kapitel 26)
 enum class EquinoxType { Spring, Summer, Autumn, Winter };
-
-// Perihel/Aphel der Erde (Kapitel 37)
-enum class EarthApsisType { Perihelion, Aphelion };
 
 // Vektor und 3x3-Matrix für die Drehung der Mondtextur
 struct Vec3 {
@@ -171,14 +160,13 @@ double calculateGreenwichSiderealTime(double jd);       // Mittlere Sternzeit Gr
 
 // Sonne und Erdbahn
 double calculateObliquity(double jd);                   // Mittlere Schiefe der Ekliptik ε0 [rad]
-double calculateSunLongitude(double jd);                // Wahre geometrische Länge der Sonne [rad]
+Ecliptic calculateSunPosition(double jd);               // Geozentrische Position der Sonne
 double calculateEarthTrueAnomaly(double jd);            // Wahre Anomalie der Erde ν [rad]
-double calculateEarthSunDistance(double jd);            // Abstand Erde–Sonne R [AE]
 double calculateEarthEccentricity(double jd);           // Exzentrizität der Erdbahn [1]
 double calculateEquationOfTime(double jd, bool withEarthTilt);  // Zeitgleichung [min]
 
 // Koordinatentransformation (Winkel [rad], Sternzeit als lokale Sternzeit θ [rad])
-Equatorial calculateEquatorial(double eclipticalLongitude, double eclipticalLatitude, double eps);
+Equatorial calculateEquatorial(const Ecliptic& ecliptic, double eps);
 Horizontal calculateHorizontal(const Equatorial& equ, double localSiderealTime, double latitude);
 double calculateParallacticAngle(const Equatorial& equ, double localSiderealTime, double latitude);
 Equatorial calculateTopocentric(const Equatorial& equ, double parallax, double localSiderealTime, double latitude);
@@ -186,22 +174,22 @@ Equatorial calculateTopocentric(const Equatorial& equ, double parallax, double l
 // Interpolation
 double interpolate(double y1, double y2, double y3, double n);
 
-// Sonnenauf-/-untergang
-SunriseSunset calculateSunriseSunset(double jd, double latitude, double longitude);
+// Auf-/Untergang (geographische Länge Ost positiv, Breite [rad])
+RiseTransitSet calculateSunRiseSet(double jd, double longitude, double latitude);
+RiseTransitSet calculateMoonRiseSet(double jd, double longitude, double latitude);
 
-// Solstitien und Äquinoktien, Perihel/Aphel der Erde [JDE]
+// Solstitien und Äquinoktien [JDE], Perihel/Aphel der Erde
 double calculateEquinoxSolstice(int year, EquinoxType type);
-double calculateEarthApsis(int year, int month, EarthApsisType type);
+Apsis calculateNextEarthApsis(double jd, ApsisType type);
 
 // Mond
-MoonPosition calculateMoonPosition(double jd);
+Ecliptic calculateMoonPosition(double jd);              // Geozentrische Position des Mondes
 double calculateMoonAscendingNode(double jd);           // Länge des aufsteigenden Knotens Ω [rad]
 double calculateMoonIlluminatedFraction(const Equatorial& sunEqu, double sunDistance,
                                         const Equatorial& moonEqu, double moonDistance);  // k [0..1]
-MoonOrientation calculateMoonOrientation(double jd, const MoonPosition& moon);
-MoonRiseSet calculateMoonRiseSet(double jd, double longitude, double latitude);
-MoonApsis calculateNextMoonApsis(double jd, MoonApsisType type);
-MoonNode calculateNextMoonNode(double jd);
+MoonOrientation calculateMoonOrientation(double jd, const Ecliptic& moon);
+Apsis calculateNextMoonApsis(double jd, ApsisType type);
+NodePassage calculateNextMoonNode(double jd);
 
 // Matrix-Operationen
 Mat3 createRotationMatrix(const Vec3& axle, double angle);

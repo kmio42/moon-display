@@ -300,14 +300,13 @@ static String buildMoonMessage() {
     snprintf(buf, sizeof(buf), " (%.0f %%)", diameterPercent(sky.moon.distance));
     msg += blockLine("Durchm.", formatArcmin(moonDiameter(sky.moon.distance)) + buf);
 
-    // Elongation, Formel 48.2 aus "Astronomische Algorithmen" von Jean Meeus (Breite der Sonne = 0)
-    const double elongation = acos(cos(sky.moon.latitude) * cos(sky.moon.longitude - sky.sunLongitude));
+    // Elongation, Formel 46.2 aus "Astronomische Algorithmen" von Jean Meeus (Breite der Sonne = 0)
+    const double elongation = acos(cos(sky.moon.latitude) * cos(sky.moon.longitude - sky.sun.longitude));
     msg += blockLine("Elong.", formatDm(elongation, false) + (sky.waxing ? " Ost" : " West"));
 
     snprintf(buf, sizeof(buf), "%s, %.1f %%", sky.waxing ? "zunehmend" : "abnehmend", sky.phase * 100.0);
     msg += blockLine("Phase", buf);
-    // calculateMoonOrientation() liefert die Libration in Länge nicht normiert
-    msg += blockLine("Librat.", "L " + formatDm(astro::normalizeRadiansSigned(sky.moonAxle.libration.longitude), true)
+    msg += blockLine("Librat.", "L " + formatDm(sky.moonAxle.libration.longitude, true)
                               + " / B " + formatDm(sky.moonAxle.libration.latitude, true));
 
     // Aufgang, Kulmination und Untergang des lokalen Tages in zeitlicher Reihenfolge,
@@ -338,13 +337,13 @@ static String buildMoonMessage() {
     }
 
     // Nächstes Perigäum/Apogäum mit Lage zwischen den Extremwerten und nächster Knotendurchgang
-    const astro::MoonApsis perigee = astro::calculateNextMoonApsis(sky.jd, astro::MoonApsisType::Perigee);
-    const astro::MoonApsis apogee  = astro::calculateNextMoonApsis(sky.jd, astro::MoonApsisType::Apogee);
+    const astro::Apsis perigee = astro::calculateNextMoonApsis(sky.jd, astro::ApsisType::Periapsis);
+    const astro::Apsis apogee  = astro::calculateNextMoonApsis(sky.jd, astro::ApsisType::Apoapsis);
     snprintf(buf, sizeof(buf), " (%.0f %%)", diameterPercent(perigee.distance));
     msg += blockLine("Perigäum", formatLocalDateTime(timeFromJulianDate(perigee.jde)) + buf);
     snprintf(buf, sizeof(buf), " (%.0f %%)", diameterPercent(apogee.distance));
     msg += blockLine("Apogäum", formatLocalDateTime(timeFromJulianDate(apogee.jde)) + buf);
-    const astro::MoonNode node = astro::calculateNextMoonNode(sky.jd);
+    const astro::NodePassage node = astro::calculateNextMoonNode(sky.jd);
     msg += blockLine("Knoten", formatLocalDateTime(timeFromJulianDate(node.jde)) + (node.ascending ? " aufst." : " abst."));
     msg.remove(msg.length() - 1);  // letzter Zeilenumbruch, sonst Leerzeile im Block
     return msg + "</pre>";

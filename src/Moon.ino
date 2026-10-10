@@ -81,9 +81,9 @@ void berechneSonnenaufgang() {
         zeitInfo.tm_mday,
         0.0);
 
-    astro::SunriseSunset s = astro::calculateSunriseSunset(jd, configLatitude * astro::DEG2RAD, configLongitude * astro::DEG2RAD);
+    astro::RiseTransitSet s = astro::calculateSunRiseSet(jd, configLongitude * astro::DEG2RAD, configLatitude * astro::DEG2RAD);
 
-    if (!s.valid) {
+    if (!s.hasRise) {
         Serial.println("  Sonnenauf/-untergang: Polartag oder Polarnacht.");
         return;
     }

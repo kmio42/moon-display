@@ -10,10 +10,10 @@ struct SkyState {
     double jd;
     double gmstHours;               // Greenwich-Sternzeit in Stunden
     double siderealTime;            // Lokale Sternzeit in Radiant
-    double sunLongitude;            // Ekliptikale Länge der Sonne
     astro::Equatorial sunRaDek;
     astro::Horizontal sunAzH;
-    astro::MoonPosition moon;       // Geozentrisch, Distanz in km
+    astro::Ecliptic sun;            // Geozentrisch, Distanz in km
+    astro::Ecliptic moon;           // Geozentrisch, Distanz in km
     astro::Equatorial moonRaDek;         // Topozentrisch
     astro::Horizontal moonAzH;
     astro::MoonOrientation moonAxle;

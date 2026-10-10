@@ -160,14 +160,21 @@ double calculateEarthEccentricity(const double jd) {
 }
 
 /**
- * Wahre geometrische Länge der Sonne ☉ = L0 + C, bezogen auf das mittlere Äquinoktium des Datums
- * (Kapitel 24).
+ * Geozentrische Position der Sonne bei niedriger Genauigkeit (Kapitel 24):
+ * wahre geometrische Länge ☉ = L0 + C, bezogen auf das mittlere Äquinoktium des Datums,
+ * Breite 0 (sie ist nie größer als 1″.2) und Radiusvektor
+ * R = 1.000001018·(1 − e²)/(1 + e·cos ν) mit ν = M + C (Formel 24.5).
  * @param jd Julianischer Tag [JD]
- * @return Länge der Sonne [rad]
+ * @return Länge ☉ und Breite [rad], Entfernung R [km]
  */
-double calculateSunLongitude(const double jd) {
+Ecliptic calculateSunPosition(const double jd) {
     const SunArguments sun = sunArguments(calculateJulianCenturies(jd));
-    return (sun.L0 + sun.C) * DEG2RAD;
+    const double nu = sun.M + sun.C * DEG2RAD;
+    return {
+        .longitude = (sun.L0 + sun.C) * DEG2RAD,
+        .latitude  = 0.0,
+        .distance  = EARTH_SEMI_MAJOR_AXIS * (1 - sun.e * sun.e) / (1 + sun.e * cos(nu)) * AU_KM,
+    };
 }
 
 /**
@@ -187,17 +194,6 @@ double calculateEarthTrueAnomaly(const double jd) {
 
     // Formel 29.1
     return 2.0 * atan2(sqrt(1 + sun.e) * sin(E / 2), sqrt(1 - sun.e) * cos(E / 2));
-}
-
-/**
- * Abstand Erde–Sonne R = 1.000001018·(1 − e²)/(1 + e·cos ν) mit ν = M + C, Formel 24.5.
- * @param jd Julianischer Tag [JD]
- * @return Abstand [AE]
- */
-double calculateEarthSunDistance(const double jd) {
-    const SunArguments sun = sunArguments(calculateJulianCenturies(jd));
-    const double nu = sun.M + sun.C * DEG2RAD;
-    return EARTH_SEMI_MAJOR_AXIS * (1 - sun.e * sun.e) / (1 + sun.e * cos(nu));
 }
 
 /**
@@ -239,14 +235,13 @@ double calculateEquationOfTime(const double jd, const bool withEarthTilt) {
 
 /**
  * Ekliptikale in äquatoriale Koordinaten, Formeln 12.3 und 12.4.
- * @param eclipticalLongitude Ekliptikale Länge λ [rad]
- * @param eclipticalLatitude Ekliptikale Breite β [rad]
+ * @param ecliptic Ekliptikale Länge λ und Breite β [rad]; die Entfernung wird nicht benötigt
  * @param eps Schiefe der Ekliptik ε [rad], z. B. aus calculateObliquity
  * @return Rektaszension α und Deklination δ [rad]
  */
-Equatorial calculateEquatorial(const double eclipticalLongitude, const double eclipticalLatitude, const double eps) {
-    const double lambda = eclipticalLongitude;
-    const double beta = eclipticalLatitude;
+Equatorial calculateEquatorial(const Ecliptic& ecliptic, const double eps) {
+    const double lambda = ecliptic.longitude;
+    const double beta = ecliptic.latitude;
     return {
         .ra  = atan2(sin(lambda) * cos(eps) - tan(beta) * sin(eps), cos(lambda)),     // Formel 12.3
         .dec = asin(sin(beta) * cos(eps) + cos(beta) * sin(eps) * sin(lambda)),       // Formel 12.4
@@ -340,38 +335,49 @@ double interpolate(const double y1, const double y2, const double y3, const doub
 
 /**
  * Genäherte Zeiten von Sonnenaufgang, Meridiandurchgang und Sonnenuntergang, Formeln 14.1 und 14.2
- * (ohne die Korrekturen Δm).
+ * (ohne die Korrekturen Δm). Rektaszension und Deklination gelten für 0h UT.
  * @param jd Julianischer Tag [JD] eines Zeitpunkts des gewünschten UT-Tags
- * @param latitude Geographische Breite φ [rad]
  * @param longitude Geographische Länge [rad], Ost positiv
- * @return Zeiten [h UT]
+ * @param latitude Geographische Breite φ [rad]
+ * @return Zeiten [h UT]; bei Polartag oder Polarnacht weder Auf- noch Untergang
  */
-SunriseSunset calculateSunriseSunset(const double jd, const double latitude, const double longitude) {
-    // Standardhöhe h0 der Sonne: −0°50′ [°]
-    constexpr double h0 = -0.8333;
+RiseTransitSet calculateSunRiseSet(const double jd, const double longitude, const double latitude) {
+    // Standardhöhe der Sonne h0 = −0°50′ [rad]
+    constexpr double h0 = -0.8333 * DEG2RAD;
 
     const double midnight = round(jd) - 0.5;
-
-    const Equatorial sun = calculateEquatorial(calculateSunLongitude(midnight), 0, calculateObliquity(midnight));
+    const Equatorial sun = calculateEquatorial(calculateSunPosition(midnight), calculateObliquity(midnight));
     // Sternzeit Greenwich um 0h UT [°]
     const double theta0 = calculateGreenwichSiderealTime(midnight) * 15.0;
 
-    // Formel 14.1
-    const double cosH0 = (sin(h0 * DEG2RAD) - sin(latitude) * sin(sun.dec))
-                       / (cos(latitude) * cos(sun.dec));
+    // Formel 14.2, Durchgang m0 in Tagesbruchteilen; die Länge zählt im Buch West positiv
+    double m0 = fmod((sun.ra * RAD2DEG - longitude * RAD2DEG - theta0) / 360.0, 1.0);
+    m0 = fmod(m0 + 1.0, 1.0);
+
+    // Höhe um 0h UT (Formel 12.6) und beim Durchgang (H = 0) [rad]
+    const double altitudeAtStart = calculateHorizontal(sun, theta0 * DEG2RAD + longitude, latitude).altitude;
+    const double transitAltitude = asin(sin(latitude) * sin(sun.dec) + cos(latitude) * cos(sun.dec));
+
+    RiseTransitSet result = {
+        .hasRise = false, .hasSet = false, .hasTransit = true,
+        .aboveAtStart = altitudeAtStart > h0,
+        .rise = 0.0, .set = 0.0, .transit = m0 * 24.0,
+        .maxAltitude = transitAltitude - h0, .maxAltitudeTime = m0 * 24.0,
+    };
+
+    // Formel 14.1; außerhalb [−1, 1] Polartag oder Polarnacht
+    const double cosH0 = (sin(h0) - sin(latitude) * sin(sun.dec)) / (cos(latitude) * cos(sun.dec));
     if (cosH0 < -1 || cosH0 > 1) {
-        return { .transit = 0, .rise = 0, .set = 0, .valid = false };
+        return result;
     }
     // Stundenwinkel H0 [°]
     const double H0 = acos(cosH0) * RAD2DEG;
 
-    // Formel 14.2 in Tagesbruchteilen; die Länge zählt im Buch West positiv
-    double m0 = fmod((sun.ra * RAD2DEG - longitude * RAD2DEG - theta0) / 360.0, 1.0);
-    m0 = fmod(m0 + 1.0, 1.0);
-    const double m1 = fmod(m0 - H0 / 360.0 + 1.0, 1.0);
-    const double m2 = fmod(m0 + H0 / 360.0 + 1.0, 1.0);
-
-    return { .transit = m0 * 24.0, .rise = m1 * 24.0, .set = m2 * 24.0, .valid = true };
+    // Formel 14.2, Aufgang m1 und Untergang m2 in Tagesbruchteilen
+    result.hasRise = result.hasSet = true;
+    result.rise = fmod(m0 - H0 / 360.0 + 1.0, 1.0) * 24.0;
+    result.set  = fmod(m0 + H0 / 360.0 + 1.0, 1.0) * 24.0;
+    return result;
 }
 
 // ---------------------------------------------------------------
@@ -425,20 +431,9 @@ double calculateEquinoxSolstice(const int year, const EquinoxType type) {
 //  Perihel / Aphel der Erde (Kapitel 37)
 // ---------------------------------------------------------------
 
-/**
- * Zeitpunkt des Perihels oder Aphels der Erde (Kapitel 37, mit den Korrekturen für den
- * Mittelpunkt der Erde statt des Baryzentrums Erde–Mond).
- * @param year Jahr
- * @param month Monat [1..12]; gesucht wird das Ereignis, das diesem Zeitpunkt am nächsten liegt
- * @param type Perihel oder Aphel
- * @return Zeitpunkt [JDE]
- */
-double calculateEarthApsis(const int year, const int month, const EarthApsisType type) {
-    // Genäherter Wert von k ≈ 0.99997·(Jahr − 2000.01); nächste ganze Zahl für das Perihel,
-    // nächste ganze Zahl + 0.5 für das Aphel
-    const double kApprox = 0.99997 * (year + (month - 1) / 12.0 - 2000.01);
-    const double k = (type == EarthApsisType::Perihelion) ? round(kApprox) : round(kApprox - 0.5) + 0.5;
-
+// Perihel (k ganzzahlig) oder Aphel (k + 0.5) der Erde nach Kapitel 37 [JDE], mit den Korrekturen
+// für den Mittelpunkt der Erde statt des Baryzentrums Erde–Mond.
+static double earthApsisForK(const double k, const ApsisType type) {
     // Korrekturterme [d]: Koeffizient × sin(A0 + A1·k), A0, A1 in Grad
     static const double angles[5][2] = {
         {328.41, 132.788585},
@@ -447,9 +442,9 @@ double calculateEarthApsis(const int year, const int month, const EarthApsisType
         {136.95, 659.306737},
         {249.52, 329.653368},
     };
-    static const double perihel[5] = { 1.278, -0.055, -0.091, -0.056, -0.045};
-    static const double aphel[5]   = {-1.352,  0.061,  0.062,  0.029,  0.031};
-    const double* coefficient = (type == EarthApsisType::Perihelion) ? perihel : aphel;
+    static const double perihelion[5] = { 1.278, -0.055, -0.091, -0.056, -0.045};
+    static const double aphelion[5]   = {-1.352,  0.061,  0.062,  0.029,  0.031};
+    const double* coefficient = (type == ApsisType::Periapsis) ? perihelion : aphelion;
 
     double correction = 0;
     for (int i = 0; i < 5; i++) {
@@ -457,6 +452,25 @@ double calculateEarthApsis(const int year, const int month, const EarthApsisType
     }
 
     return horner(k, 2451547.507, 365.2596358, 0.0000000158) + correction;
+}
+
+/**
+ * Erstes Perihel bzw. Aphel der Erde nach jd (Kapitel 37). Der mittlere Fehler beträgt drei Stunden.
+ * @param jd Julianischer Tag [JD]
+ * @param type Perihel (Periapsis) oder Aphel (Apoapsis)
+ * @return Zeitpunkt [JDE] und Entfernung Erde–Sonne nach Formel 24.5 [km]
+ */
+Apsis calculateNextEarthApsis(const double jd, const ApsisType type) {
+    // k ≈ 0.99997·(Jahr − 2000.01), ganzzahlig für das Perihel, + 0.5 für das Aphel
+    const double year = 2000.0 + (jd - 2451545.0) / 365.25;
+    double k = floor(0.99997 * (year - 2000.01)) - 1;
+    if (type == ApsisType::Apoapsis) k += 0.5;
+    double jde = earthApsisForK(k, type);
+    while (jde <= jd) {
+        k += 1;
+        jde = earthApsisForK(k, type);
+    }
+    return { .jde = jde, .distance = calculateSunPosition(jde).distance };
 }
 
 // ---------------------------------------------------------------
@@ -640,7 +654,7 @@ static inline double eccentricityFactor(const int multipleOfM, const double E) {
  * @param jd Julianischer Tag [JD]
  * @return Länge λ und Breite β [rad], Entfernung Δ [km]
  */
-MoonPosition calculateMoonPosition(const double jd) {
+Ecliptic calculateMoonPosition(const double jd) {
     const double T = calculateJulianCenturies(jd);
     const MoonArguments a = moonArguments(T);
 
@@ -726,7 +740,7 @@ double calculateMoonIlluminatedFraction(const Equatorial& sunEqu, const double s
  * @param moon Geozentrische Position des Mondes aus calculateMoonPosition
  * @return Libration l (−π, π] und b [rad], Positionswinkel P [rad]
  */
-MoonOrientation calculateMoonOrientation(const double jd, const MoonPosition& moon) {
+MoonOrientation calculateMoonOrientation(const double jd, const Ecliptic& moon) {
     const double T = calculateJulianCenturies(jd);
     const MoonArguments a = moonArguments(T);
     const double Omega = calculateMoonAscendingNode(jd);
@@ -798,7 +812,7 @@ MoonOrientation calculateMoonOrientation(const double jd, const MoonPosition& mo
 
     // Positionswinkel der Achse P
     const double eps = calculateObliquity(jd);
-    const Equatorial moonEqu = calculateEquatorial(lambda, beta, eps);
+    const Equatorial moonEqu = calculateEquatorial(moon, eps);
     const double V = Omega + sigma / sin(I);
     const double X = sin(I + rho) * sin(V);
     const double Y = sin(I + rho) * cos(V) * cos(eps) - cos(I + rho) * sin(eps);
@@ -887,7 +901,7 @@ static double sumApsisTerms(const ApsisTerm (&terms)[N], const double T,
 }
 
 // Perigäum (k ganzzahlig) oder Apogäum (k + 0.5) nach Kapitel 48.
-static MoonApsis moonApsisForK(const double k, const MoonApsisType type) {
+static Apsis moonApsisForK(const double k, const ApsisType type) {
     // Formel 48.3 [Julianische Jahrhunderte]
     const double T = k / 1325.55;
 
@@ -899,7 +913,7 @@ static MoonApsis moonApsisForK(const double k, const MoonApsisType type) {
     const double M = (347.3477 + 27.1577721 * k + T * T * horner(T, -0.0008323, -0.0000010)) * DEG2RAD;
     const double F = (316.6109 + 364.5287911 * k + T * T * horner(T, -0.0125131, -0.0000148)) * DEG2RAD;
 
-    const bool perigee = type == MoonApsisType::Perigee;
+    const bool perigee = type == ApsisType::Periapsis;
     const double jde = jdeMean + (perigee ? sumApsisTerms(PERIGEE_TIME, T, D, M, F, false)
                                           : sumApsisTerms(APOGEE_TIME, T, D, M, F, false));
     // Äquatoriale Horizontalparallaxe [″] → [rad]
@@ -912,14 +926,14 @@ static MoonApsis moonApsisForK(const double k, const MoonApsisType type) {
  * Erstes Perigäum bzw. Apogäum des Mondes nach jd (Kapitel 48).
  * Meeus gibt die Genauigkeit des Zeitpunkts mit bis zu 31 min (Perigäum) bzw. 3 min (Apogäum) an.
  * @param jd Julianischer Tag [JD]
- * @param type Perigäum oder Apogäum
+ * @param type Perigäum (Periapsis) oder Apogäum (Apoapsis)
  * @return Zeitpunkt [JDE] und Entfernung [km]
  */
-MoonApsis calculateNextMoonApsis(const double jd, const MoonApsisType type) {
+Apsis calculateNextMoonApsis(const double jd, const ApsisType type) {
     // k zählt die anomalistischen Monate ab dem Perigäum 1999 Dezember 22 (Formel 48.1 nach k umgestellt)
     double k = floor((jd - 2451534.6698) / 27.55454988) - 1;
-    if (type == MoonApsisType::Apogee) k += 0.5;
-    MoonApsis apsis = moonApsisForK(k, type);
+    if (type == ApsisType::Apoapsis) k += 0.5;
+    Apsis apsis = moonApsisForK(k, type);
     while (apsis.jde <= jd) {
         k += 1;
         apsis = moonApsisForK(k, type);
@@ -972,7 +986,7 @@ static double moonNodeForK(const double k) {
  * @param jd Julianischer Tag [JD]
  * @return Zeitpunkt [JDE] und Art des Knotens
  */
-MoonNode calculateNextMoonNode(const double jd) {
+NodePassage calculateNextMoonNode(const double jd) {
     // k zählt die drakonitischen Monate ab dem aufsteigenden Knoten 2000 Januar 21
     double k = floor((jd - 2451565.1619) / 27.212220817) - 1;
     double jde = moonNodeForK(k);
@@ -1058,8 +1072,8 @@ struct MoonSample {
 };
 
 MoonSample sampleMoon(const double jd, const double longitude, const double latitude) {
-    const MoonPosition moon = calculateMoonPosition(jd);
-    const Equatorial equ = calculateEquatorial(moon.longitude, moon.latitude, calculateObliquity(jd));
+    const Ecliptic moon = calculateMoonPosition(jd);
+    const Equatorial equ = calculateEquatorial(moon, calculateObliquity(jd));
     // Lokale Sternzeit [rad]
     const double siderealTime = calculateGreenwichSiderealTime(jd) * M_PI / 12.0 + longitude;
     const Horizontal azh = calculateHorizontal(equ, siderealTime, latitude);
@@ -1084,7 +1098,7 @@ MoonSample sampleMoon(const double jd, const double longitude, const double lati
  * @param latitude Geographische Breite [rad]
  * @return Ereignisse [h UT] und höchste Höhe [rad]
  */
-MoonRiseSet calculateMoonRiseSet(const double jd, const double longitude, const double latitude) {
+RiseTransitSet calculateMoonRiseSet(const double jd, const double longitude, const double latitude) {
     const double midnight = round(jd) - 0.5;
     auto sampleAt = [&](int hour) {
         return sampleMoon(midnight + hour / 24.0, longitude, latitude);
@@ -1094,10 +1108,10 @@ MoonRiseSet calculateMoonRiseSet(const double jd, const double longitude, const 
     MoonSample s0 = sampleAt(0);
     MoonSample s1 = sampleAt(1);
 
-    MoonRiseSet result = {};
+    RiseTransitSet result = {};
     result.aboveAtStart = s0.altitude > 0.0;
     result.maxAltitude = s0.altitude;
-    result.maxAltitudeHours = 0.0;
+    result.maxAltitudeTime = 0.0;
 
     for (int k = 0; k < 24; k++) {
         const MoonSample s2 = sampleAt(k + 2);
@@ -1111,10 +1125,10 @@ MoonRiseSet calculateMoonRiseSet(const double jd, const double longitude, const 
             const double hours = k + parabolaRootInUnitInterval(altitude);
             if (belowAtStart && !result.hasRise) {
                 result.hasRise = true;
-                result.riseHours = hours;
+                result.rise = hours;
             } else if (!belowAtStart && !result.hasSet) {
                 result.hasSet = true;
-                result.setHours = hours;
+                result.set = hours;
             }
         } else if (fabs(altitude.A) > 1e-12) {
             // Gleiches Vorzeichen an beiden Enden: zwei Durchgänge, wenn der Scheitel im Intervall
@@ -1128,11 +1142,11 @@ MoonRiseSet calculateMoonRiseSet(const double jd, const double longitude, const 
                     const double setHours  = k + (belowAtStart ? roots.r2 : roots.r1);
                     if (!result.hasRise) {
                         result.hasRise = true;
-                        result.riseHours = riseHours;
+                        result.rise = riseHours;
                     }
                     if (!result.hasSet) {
                         result.hasSet = true;
-                        result.setHours = setHours;
+                        result.set = setHours;
                     }
                 }
             }
@@ -1145,20 +1159,20 @@ MoonRiseSet calculateMoonRiseSet(const double jd, const double longitude, const 
             const double w0 = s1.hourAngle + normalizeRadiansSigned(s0.hourAngle - s1.hourAngle);
             const double w2 = s1.hourAngle + normalizeRadiansSigned(s2.hourAngle - s1.hourAngle);
             result.hasTransit = true;
-            result.transitHours = k + parabolaRootInUnitInterval(parabolaThrough(w0, s1.hourAngle, w2));
+            result.transit = k + parabolaRootInUnitInterval(parabolaThrough(w0, s1.hourAngle, w2));
         }
 
         // Höchster Stand: Stützstelle k+1 und Parabelscheitel innerhalb des Fensters (und des Tages)
         if (s1.altitude > result.maxAltitude) {
             result.maxAltitude = s1.altitude;
-            result.maxAltitudeHours = k + 1;
+            result.maxAltitudeTime = k + 1;
         }
         if (altitude.A < 0.0) {
             const double u = -altitude.B / (2.0 * altitude.A);
             const double vertex = parabolaValue(altitude, u);
             if (u > 0.0 && u < 2.0 && k + u <= 24.0 && vertex > result.maxAltitude) {
                 result.maxAltitude = vertex;
-                result.maxAltitudeHours = k + u;
+                result.maxAltitudeTime = k + u;
             }
         }
 
