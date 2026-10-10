@@ -1,372 +1,369 @@
-# Architektur
+# Architecture
+*English | [Deutsch](ARCHITECTURE.de.md)*
 
-Dieses Dokument beschreibt, wie die Firmware des Mond-Displays aufgebaut ist. Wie man das Gerät
-bedient und konfiguriert, steht in der [readme.md](readme.md) (deutsch: [readme.de.md](readme.de.md)).
+This document describes how the firmware of the Moon Display is structured. How to operate and
+configure the device is described in the [readme.md](readme.md) (German: [readme.de.md](readme.de.md)).
 
-## Überblick
+## Overview
 
-Die Firmware läuft auf einem ESP32-C3 (Arduino-Framework, PlatformIO/pioarduino) und steuert ein
-rundes 240×240-Display (GC9A01, SPI). Das Netzwerk dient nur als Zeitquelle (NTP) und für die
-Benachrichtigungswege (Telegram, Pushover). **Alle astronomischen Berechnungen laufen auf dem Gerät.**
+The firmware runs on an ESP32-C3 (Arduino framework, PlatformIO/pioarduino) and drives a round
+240×240 display (GC9A01, SPI). The network is only used as a time source (NTP) and for the
+notification channels (Telegram, Pushover). **All astronomical calculations run on the device.**
 
 ```
                     ┌────────────────────────────── MondPhase.ino ──────────────────────────────┐
-                    │  setup(), loop(), serielle Zeilen lesen, Moduswechsel, WLAN               │
+                    │  setup(), loop(), read serial lines, mode switching, Wi-Fi                │
                     └───────┬───────────────────┬──────────────────────┬────────────────────────┘
                             │                   │                      │
                             │         ┌─────────▼──────────┐           │
-                            │         │ Befehle            │           │
+                            │         │ Commands           │           │
                             │         │ Commands.ino       │──────────►│
                             │         │ Messages.ino, i18n │           │
                             │         └─────────┬──────────┘           │
               ┌─────────────▼───┐     ┌─────────▼──────────┐    ┌──────▼───────────────┐
-              │ Anzeige         │     │ Benachrichtigung   │    │ Konfiguration        │
+              │ Display         │     │ Notification       │    │ Configuration        │
               │ Moon.ino        │     │ Telegram.ino       │    │ Config.ino (NVS)     │
               │ clock_face.cpp  │     │ Pushover.ino       │    │ credentials.h        │
               └───────┬─────────┘     └─────────┬──────────┘    └──────────────────────┘
                       │                         │
-              ┌───────▼─────────┐               │ (Tagesbericht, Mondbild)
+              ┌───────▼─────────┐               │ (daily report, moon image)
               │ moon_render.cpp │◄──────────────┤
               │ png_stream.cpp  │◄──────────────┘
-              │ picture.ino     │  Texturen (Flash)
+              │ picture.ino     │  textures (flash)
               └───────┬─────────┘
                       │
               ┌───────▼─────────┐
-              │ ephemeris.cpp   │  SkyState, Tagesereignisse, Ausblick
+              │ ephemeris.cpp   │  SkyState, daily events, outlook
               └───────┬─────────┘
                       │
               ┌───────▼─────────┐
-              │ astro.cpp       │  Formeln nach Meeus, reine Mathematik
+              │ astro.cpp       │  formulas after Meeus, pure maths
               └─────────────────┘
 ```
 
-Die Schichten sind strikt geordnet: Eine Schicht kennt nur die unter ihr liegenden. `astro.cpp` und
-`ephemeris.cpp` wissen nichts vom Display und vom Netzwerk.
+The layers are strictly ordered: a layer only knows the layers below it. `astro.cpp` and
+`ephemeris.cpp` know nothing about the display or the network.
 
-## Dateien
+## Files
 
-| Datei | Aufgabe |
+| File | Purpose |
 |---|---|
-| [MondPhase.ino](src/MondPhase.ino) | Einstiegspunkt: `setup()`, `loop()`, WLAN-Verbindung, NTP, serielle Zeilen lesen, Moduswechsel |
-| [Commands.ino](src/Commands.ino) | Befehlstabelle für die serielle Schnittstelle und Telegram ([commands.h](src/commands.h)) |
-| [Messages.ino](src/Messages.ino) | Tagesbericht, Mond- und Sonnenkoordinaten als Text, Formatierung ([messages.h](src/messages.h)) |
-| [i18n.cpp](src/i18n.cpp) | Übersetzte Texte: Text-IDs in [i18n_ids.h](src/i18n_ids.h), eine Datei pro Sprache in [lang/](src/lang/) |
-| [Config.ino](src/Config.ino) | Persistente Einstellungen in NVS, Umrechnung UTC → Lokalzeit, Prüfung von Zeitzone und `HH:MM` |
-| [Moon.ino](src/Moon.ino) | Mondanzeige: bereitet das Rendern vor und schreibt das Bild zeilenweise aufs Display; Debug-Ausgabe |
-| [clock_face.cpp](src/clock_face.cpp) | 24h-Uhr: Zeichnen von Ring, Segment, Zeigern und Mondsymbol |
-| [moon_render.cpp](src/moon_render.cpp) | Mondbild als Funktion `moonPixel(x, y)` bzw. verkleinert `moonPixelAveraged()`, ohne Bildspeicher |
-| [picture.ino](src/picture.ino) | Texturen im Flash: `FullMoon` (Foto, 240×240) und `lroc` (NASA-Karte, 480×240) |
-| [png_stream.cpp](src/png_stream.cpp) | PNG-Schreiber, der das Bild Stück für Stück erzeugt |
-| [ephemeris.cpp](src/ephemeris.cpp) | Sonne, Mond, Auf-/Untergänge und Ausblick für einen Standort und Zeitpunkt |
-| [astro.cpp](src/astro.cpp) | Astronomische Formeln nach Jean Meeus, Datentypen für Winkel, Sternzeit und Julianischen Tag |
-| [Telegram.ino](src/Telegram.ino) | Bot (Polling, Zugriffsregeln), Tagesbericht, Mond- und Uhrenbild, Profil- und Gruppenbild |
-| [Pushover.ino](src/Pushover.ino) | Nachrichten über die Pushover-API |
-| [display_mode.h](src/display_mode.h) | Konstanten der Anzeigemodi |
-| [credentials.h](src/credentials.h.template) | WLAN-Daten und Zugangsdaten der Dienste (nicht im Repository) |
+| [MondPhase.ino](src/MondPhase.ino) | Entry point: `setup()`, `loop()`, Wi-Fi connection, NTP, reading serial lines, mode switching |
+| [Commands.ino](src/Commands.ino) | Command table for the serial interface and Telegram ([commands.h](src/commands.h)) |
+| [Messages.ino](src/Messages.ino) | Daily report, moon and sun coordinates as text, formatting ([messages.h](src/messages.h)) |
+| [i18n.cpp](src/i18n.cpp) | Translated texts: text IDs in [i18n_ids.h](src/i18n_ids.h), one file per language in [lang/](src/lang/) |
+| [Config.ino](src/Config.ino) | Persistent settings in NVS, conversion UTC → local time, validation of time zone and `HH:MM` |
+| [Moon.ino](src/Moon.ino) | Moon display: prepares rendering and writes the image to the display line by line; debug output |
+| [clock_face.cpp](src/clock_face.cpp) | 24-hour clock: drawing of ring, segment, hands and moon symbol |
+| [moon_render.cpp](src/moon_render.cpp) | Moon image as a function `moonPixel(x, y)` or scaled down `moonPixelAveraged()`, without an image buffer |
+| [picture.ino](src/picture.ino) | Textures in flash: `FullMoon` (photo, 240×240) and `lroc` (NASA map, 480×240) |
+| [png_stream.cpp](src/png_stream.cpp) | PNG writer that produces the image piece by piece |
+| [ephemeris.cpp](src/ephemeris.cpp) | Sun, moon, rising/setting and outlook for a location and point in time |
+| [astro.cpp](src/astro.cpp) | Astronomical formulas after Jean Meeus, data types for angles, sidereal time and Julian Day |
+| [Telegram.ino](src/Telegram.ino) | Bot (polling, access rules), daily report, moon and clock image, profile and group photo |
+| [Pushover.ino](src/Pushover.ino) | Messages via the Pushover API |
+| [display_mode.h](src/display_mode.h) | Constants of the display modes |
+| [credentials.h](src/credentials.h.template) | Wi-Fi and service credentials (not in the repository) |
 
-Die `.ino`-Dateien sind Teile eines einzigen Sketches. Der Arduino-Build fügt sie zusammen, deshalb
-rufen sie sich über `extern`-Deklarationen gegenseitig auf. Die `.cpp`-Dateien sind eigene
-Übersetzungseinheiten mit Header und enthalten die Logik, die auch ohne Gerät übersetzbar sein soll
-(siehe [Vorschau auf dem PC](#vorschau-auf-dem-pc)).
+The `.ino` files are parts of a single sketch. The Arduino build concatenates them, so they call
+each other via `extern` declarations. Types shared between them live in headers (`commands.h`,
+`messages.h`). The `.cpp` files are separate translation units with a header and contain the logic
+that should also compile without the device (see [Preview on the PC](#preview-on-the-pc)).
 
-## Ablauf zur Laufzeit
+## Runtime flow
 
-Es gibt einen einzigen Kontrollfluss, keine Tasks und keine Interrupts. `loop()` in
-[MondPhase.ino](src/MondPhase.ino) wiederholt etwa alle 100 ms:
+There is a single flow of control, no tasks and no interrupts. `loop()` in
+[MondPhase.ino](src/MondPhase.ino) repeats roughly every 100 ms:
 
-1. WLAN pflegen (`WiFiMulti`, bis zu 3 Netzwerke, höchstens einmal pro Sekunde).
-2. Serielle Befehle lesen.
-3. `handleTelegram()`: Nachrichten abholen (alle 3 s), Tagesbericht und Mondbilder prüfen.
-4. Je nach Anzeigemodus zeichnen: im Mond-Modus einmal pro Minute, im Uhren-Modus einmal pro Minute
-   den Stundenzeiger.
+1. Maintain Wi-Fi (`WiFiMulti`, up to 3 networks, at most once per second).
+2. Read serial commands.
+3. `handleTelegram()`: fetch messages (every 3 s), check the daily report and moon photos.
+4. Draw according to the display mode: in moon mode once per minute, in clock mode the hour hand
+   once per minute.
 
-Daraus folgt: Alles, was lange dauert, blockiert die Anzeige, Telegram und die seriellen Befehle.
-Gemessene Dauer auf dem Gerät (ESP32-C3 ohne FPU, 160 MHz):
+Consequently, anything that takes long blocks the display, Telegram and the serial commands.
+Measured durations on the device (ESP32-C3 without FPU, 160 MHz):
 
-| Vorgang | Dauer |
+| Operation | Duration |
 |---|---|
-| Uhr komplett neu zeichnen (Tageswechsel, Start) | 1,7–2,6 s, davon 0,9 s Mondephemeriden |
-| Mondsymbol der Uhr (alle 5 Minuten) | ca. 1,5 s |
-| Mondmodus, ganzes Bild (jede Minute) | 4,3 s |
-| Tagesbericht | 1,7 s |
-| Profil- und Gruppenbild rendern und hochladen | ca. 6 s |
-| Uhr, nur Stundenzeiger (jede Minute) | ca. 20 ms |
+| Redraw the whole clock (day change, start) | 1.7–2.6 s, of which 0.9 s moon ephemerides |
+| Moon symbol of the clock (every 5 minutes) | approx. 1.5 s |
+| Moon mode, full image (every minute) | 4.3 s |
+| Daily report | 1.7 s |
+| Render and upload profile and group photo | approx. 6 s |
+| Clock, hour hand only (every minute) | approx. 20 ms |
 
-`setup()` lädt die Konfiguration, startet WLAN und NTP (`configTime`), initialisiert das Display
-und ruft `setupTelegram()` auf. Solange NTP nicht synchronisiert hat, liegt
-die Systemzeit vor 2023. Alle Teile prüfen das (`MIN_VALID_TIME`) und warten.
+`setup()` loads the configuration, starts Wi-Fi and NTP (`configTime`), initialises the display
+and calls `setupTelegram()`. Until NTP has synchronised, the system time is before 2023. All parts
+check this (`MIN_VALID_TIME`) and wait.
 
-## Zeitkonventionen
+## Time conventions
 
-- Das System läuft in **UTC** (`TZ=UTC0`). Alle Berechnungen in `astro` und `ephemeris` nutzen UT.
-- Erst die Ausgabe wird in die Lokalzeit umgerechnet, mit `utcToLocal()` in
-  [Config.ino](src/Config.ino) und dem POSIX-String `configLocation.timezone`. Die Funktion stellt `TZ` nur
-  kurz um und setzt es danach wieder auf UTC. `TZ` wird dabei nicht mit `setenv()` gesetzt, sondern
-  in einem einmal angelegten Puffer überschrieben (`setTimezone()`): newlib gibt bei `setenv()` den
-  alten Wert nicht frei, wenn der neue länger ist, und der ständige Wechsel hat so den Heap geleert.
-- Tageswerte (Sonnenauf-/-untergang, Mondereignisse, Tagesbericht) gelten für den **lokalen
-  Kalendertag**. `eventsForLocalDay()` berechnet die Ereignisse der UT-Tage, die den lokalen Tag
-  überlappen, und filtert sie nach lokalem Datum.
-- Ein lokaler Tag wird als Schlüssel `Jahr*1000 + Tag im Jahr` geführt (`localDayKey`).
+- The system runs in **UTC** (`TZ=UTC0`). All calculations in `astro` and `ephemeris` use UT.
+- Only the output is converted to local time, with `utcToLocal()` in [Config.ino](src/Config.ino)
+  and the POSIX string `configLocation.timezone`. The function switches `TZ` only briefly and then
+  sets it back to UTC. `TZ` is not set with `setenv()` but overwritten in a buffer allocated once
+  (`setTimezone()`): newlib's `setenv()` does not free the old value when the new one is longer, and
+  the constant switching used to drain the heap.
+- Daily values (sunrise/sunset, moon events, daily report) refer to the **local calendar day**.
+  `eventsForLocalDay()` computes the events of the UT days overlapping the local day and filters them
+  by local date.
+- A local day is kept as the key `year*1000 + day of year` (`localDayKey`).
 
-## Astronomie
+## Astronomy
 
-**[astro.cpp](src/astro.cpp)** enthält die Formeln aus Meeus, *Astronomische Algorithmen*, 2. Auflage
-(Barth 1994; Kapitelzählung wie die englische Ausgabe von 1991): Julianischer Tag, Sternzeit, Sonne,
-Mond, Koordinatentransformationen, Parallaxe, Libration, parallaktischer Winkel, Auf- und Untergang der
-Sonne, Perigäum und Apogäum des Mondes (Kap. 48) und seine Knotendurchgänge (Kap. 49). Welche Kapitel
-umgesetzt sind und welche nicht, steht im Kopf von [astro.h](src/astro.h). Kommentare nennen Kapitel
-und Formelnummer, Polynome stehen im Horner-Schema (`horner(T, c0, c1, …)` mit den Koeffizienten
-in der Reihenfolge des Buchs). Es hat keine Abhängigkeiten außer der C++-Standardbibliothek. TD wird
-überall mit UT gleichgesetzt (ΔT ≈ 1 min wird vernachlässigt).
+**[astro.cpp](src/astro.cpp)** contains the formulas from Meeus, *Astronomische Algorithmen*, 2nd
+edition (Barth 1994; chapter numbering as in the 1991 English edition *Astronomical Algorithms*):
+Julian Day, sidereal time, sun, moon, coordinate transformations, parallax, libration, parallactic
+angle, sunrise and sunset, perigee and apogee of the moon (ch. 48) and its node passages (ch. 49).
+Which chapters are implemented and which are not is listed in the header of [astro.h](src/astro.h).
+Comments name chapter and formula number, polynomials use Horner's scheme (`horner(T, c0, c1, …)`
+with the coefficients in the book's order). It has no dependencies apart from the C++ standard
+library. TD is equated with UT throughout (ΔT ≈ 1 min is neglected).
 
-Die Einheiten sind über Datentypen abgesichert, die zur Laufzeit nichts kosten (Hüllen um `double`):
+Units are enforced by data types that cost nothing at runtime (wrappers around `double`):
 
-- `Angle`: Winkel, intern in Radiant. Erzeugt wird er nur mit Einheit (`Angle::fromDeg`,
-  `fromHours`, `fromDms`, Literal `90_deg`), gelesen mit `.deg()`, `.rad()`, `.hours()`.
-  `sin`/`cos`/`tan` nehmen direkt einen `Angle`, die Umkehrfunktionen heißen `Angle::asin` usw.
-- `SiderealTime`: Sternzeit. Nur `θ0 + Länge → θ` und `θ − α → Stundenwinkel` sind erlaubt.
-- `JulianDay`: Zeitpunkt als Parameter, mit `fromCalendar`, `fromTm`, `fromUnixTime`, `toUnixTime`,
-  `centuries()` (T) und `midnight()`. Ergebnisse wie Auf-/Untergang (Stunden UT) oder JDE von
-  Perigäum und Knoten bleiben `double`.
+- `Angle`: an angle, internally in radians. It is only created with a unit (`Angle::fromDeg`,
+  `fromHours`, `fromDms`, literal `90_deg`) and read with `.deg()`, `.rad()`, `.hours()`.
+  `sin`/`cos`/`tan` take an `Angle` directly, the inverse functions are `Angle::asin` etc.
+- `SiderealTime`: sidereal time. Only `θ0 + longitude → θ` and `θ − α → hour angle` are allowed.
+- `JulianDay`: a point in time as a parameter, with `fromCalendar`, `fromTm`, `fromUnixTime`,
+  `toUnixTime`, `centuries()` (T) and `midnight()`. Results such as rising/setting (hours UT) or the
+  JDE of perigee and node remain `double`.
 
-Gemeinsame Strukturen: `Ecliptic` (Sonne und Mond), `Equatorial`, `Horizontal`, `Selenographic`
-(Libration), `RiseTransitSet` (Auf-/Untergang von Sonne und Mond), `Apsis`, `NodePassage` und
-`GeoLocation` (Länge, Breite, Höhe über dem Meeresspiegel, Zeitzone). Die Höhe geht in die
-topozentrische Korrektur (Kap. 39) ein.
+Shared structures: `Ecliptic` (sun and moon), `Equatorial`, `Horizontal`, `Selenographic`
+(libration), `RiseTransitSet` (rising/setting of sun and moon), `Apsis`, `NodePassage` and
+`GeoLocation` (longitude, latitude, elevation above sea level, time zone). The elevation enters the
+topocentric correction (ch. 39).
 
-**[ephemeris.cpp](src/ephemeris.cpp)** setzt darauf auf und kennt den Standort (`configLocation`):
+**[ephemeris.cpp](src/ephemeris.cpp)** builds on it and knows the location (`configLocation`):
 
-- `computeSky(utc)` liefert einen `SkyState`: Sonne und Mond (der Mond topozentrisch, also
-  parallaxenkorrigiert), Azimut und Höhe, Phase, zunehmend oder abnehmend, Positionswinkel `chi` des
-  hellen Randes, parallaktischer Winkel `q`, Mondachse und Libration.
-- `eventsForLocalDay()` liefert Auf- und Untergänge von Sonne und Mond sowie den Meridiandurchgang des
-  Mondes als UTC-Zeitpunkte. Der Mond hat
-  keine Meeus-Formel für den Aufgang, deshalb wird seine Höhe stündlich abgetastet und der
-  Horizontdurchgang durch quadratische Interpolation bestimmt. Das kostet etwa 0,2 s pro UT-Tag.
-  Die Ergebnisse der letzten 5 UT-Tage liegen deshalb in einem Zwischenspeicher
-  (`moonRiseSetForUtDay`), den Uhr, Tagesbericht und Kulminationshöhe gemeinsam nutzen. Ändert sich
-  der Standort, wird er geleert.
-- `moonOutlookFor()` bestimmt für den Tagesbericht die Kulminationshöhe, die Tendenz und die Ereignisse der
-  nächsten 14 Tage: Voll- und Neumond (durch Bisektion der Elongation), Finsternisse, Super- und
-  Minimond.
+- `computeSky(utc)` returns a `SkyState`: sun and moon (the moon topocentric, i.e. corrected for
+  parallax), azimuth and altitude, phase, waxing or waning, position angle `chi` of the bright limb,
+  parallactic angle `q`, moon axis and libration.
+- `eventsForLocalDay()` returns rising and setting of sun and moon and the meridian transit of the
+  moon as UTC times. There is no Meeus formula for moonrise, so the moon's altitude is sampled hourly
+  and the horizon crossing is found by quadratic interpolation. This costs about 0.2 s per UT day,
+  so the results of the last 5 UT days are kept in a cache (`moonRiseSetForUtDay`) shared by the
+  clock, the daily report and the culmination height. The cache is cleared when the location changes.
+- `moonOutlookFor()` determines, for the daily report, the culmination height, its trend and the
+  events of the next 14 days: full and new moon (by bisection of the elongation), eclipses, super
+  and mini moon.
+- `moonPhaseOf()` returns the phase as `MoonPhase` (8 phases) for name and symbol; the name comes
+  from i18n, so `astro` and `ephemeris` contain no text.
 
-## Mondbild
+## Moon image
 
-[moon_render.cpp](src/moon_render.cpp) rendert den Mond **ohne Bildpuffer**. Der ESP32-C3 hat zu wenig
-RAM für ein 240×240-Bild mit 16 Bit, deshalb gibt `moonPixel(x, y)` die Farbe eines einzelnen Pixels
-zurück, und der Aufrufer entscheidet, wohin sie geht:
+[moon_render.cpp](src/moon_render.cpp) renders the moon **without an image buffer**. The ESP32-C3
+does not have enough RAM for a 240×240 image at 16 bits, so `moonPixel(x, y)` returns the colour of a
+single pixel and the caller decides where it goes:
 
-- Display: [Moon.ino](src/Moon.ino) berechnet eine Zeile innerhalb des Mondkreises und schreibt sie
-  mit `drawRGBBitmap` in einem Block (ein Adressfenster pro Zeile statt pro Pixel).
-- Telegram: [png_stream.cpp](src/png_stream.cpp) holt Zeile für Zeile und sendet sie direkt; der
-  JPEG-Encoder fürs Profilbild holt 16×16-Blöcke.
-- Uhren-Modus: [clock_face.cpp](src/clock_face.cpp) verkleinert das Bild auf das Mondsymbol mit
-  `moonPixelAveraged()`: Mondrand und Beleuchtung werden an 2×2 Abtastpunkten je Pixel geprüft, die
-  Textur wird nur einmal in der Mitte gelesen (Mittel aus 2×2 Texeln). Auch hier wird zeilenweise
-  geschrieben.
+- Display: [Moon.ino](src/Moon.ino) computes one line inside the moon disc and writes it with
+  `drawRGBBitmap` as one block (one address window per line instead of per pixel).
+- Telegram: [png_stream.cpp](src/png_stream.cpp) fetches line by line and sends directly; the JPEG
+  encoder for the profile photo fetches 16×16 blocks.
+- Clock mode: [clock_face.cpp](src/clock_face.cpp) scales the image down to the moon symbol with
+  `moonPixelAveraged()`: limb and illumination are checked at 2×2 sample points per pixel, the
+  texture is read only once in the centre (average of 2×2 texels). Here too, output is line by line.
 
-Vorbereitung und Rendern sind getrennt: `prepareMoonRenderAt(utc)` berechnet einmal den Himmelszustand
-und legt Phase, Winkel, Rotationsmatrix und Optionen in statischen Variablen ab. `moonPixel()` nutzt diese
-Werte für jedes Pixel. Damit ist das Rendern **nicht wiederverwendbar im Sinne mehrerer gleichzeitiger
-Bilder**: Wer zwischen `prepare` und dem letzten `moonPixel` ein anderes `prepare` aufruft, verfälscht
-das Bild.
+Preparation and rendering are separate: `prepareMoonRenderAt(utc)` computes the sky state once and
+stores phase, angles, rotation matrix and options in static variables. `moonPixel()` uses these
+values for every pixel. Rendering is therefore **not reusable for several simultaneous images**:
+calling another `prepare` between `prepare` and the last `moonPixel` corrupts the image.
 
-Pro Pixel wird geprüft:
+For each pixel:
 
-1. Liegt es im Mondkreis?
-2. Ist es beleuchtet? Der Terminator ist eine Ellipse, die mit der Phase skaliert und um den Winkel der
-   Maske gedreht ist. Zusammen mit dem Kreis ergibt das die beleuchtete Fläche.
-3. Welche Farbe hat die Textur an dieser Stelle? Mit Libration wird der Punkt auf der Kugel mit der
-   Rotationsmatrix zurückgerechnet und in der NASA-Karte (`lroc`) oder im Foto nachgeschlagen. Diese
-   Rechnung läuft in `float` (ein Texel entspricht etwa 0,75°) und ohne Normierung, da der gedrehte
-   Vektor bereits die Länge r hat; ohne FPU ist sie trotzdem der teuerste Teil.
-4. Abdunkeln der unbeleuchteten Seite und bläuliche Tönung unter dem Horizont, falls gewählt.
+1. Is it inside the moon disc?
+2. Is it illuminated? The terminator is an ellipse scaled with the phase and rotated by the mask
+   angle. Together with the disc this gives the illuminated area.
+3. What is the texture colour at this point? With libration, the point on the sphere is rotated back
+   with the rotation matrix and looked up in the NASA map (`lroc`) or the photo. This calculation runs
+   in `float` (one texel corresponds to about 0.75°) and without normalisation, since the rotated
+   vector already has length r; without an FPU it is still the most expensive part.
+4. Darkening of the unlit side and bluish tint below the horizon, if selected.
 
-Die Darstellungsoptionen sind ein Bitfeld (siehe [moon_render.h](src/moon_render.h)): abdunkeln,
-Tönung, NASA-Textur, Libration, parallaktischen Winkel und Positionswinkel ignorieren. Die Option
-„ignorieren“ dreht Textur und Terminator gemeinsam, damit der Terminator auf denselben Mondformationen
-bleibt.
+The display options are a bit mask (see [moon_render.h](src/moon_render.h)): darken, tint, NASA
+texture, libration, ignore parallactic angle and ignore position angle. The "ignore" options rotate
+texture and terminator together, so the terminator stays on the same lunar features.
 
-Das Profilbild von Telegram nutzt **feste** Optionen (13), unabhängig von der Einstellung.
+The Telegram profile photo uses **fixed** options (13), independent of the setting.
 
-## Uhren-Modus
+## Clock mode
 
-[clock_face.cpp](src/clock_face.cpp) zeichnet ein 24-Stunden-Zifferblatt (0 Uhr unten, 12 Uhr oben).
-`computeClockData()` bildet die Ereignisse des Tages auf Stunden ab. Die Ereignisse werden pro
-lokalem Tag zwischengespeichert, nur die gestrichelte Linie des Mondlaufs hängt von der Uhrzeit ab.
+[clock_face.cpp](src/clock_face.cpp) draws a 24-hour dial (midnight at the bottom, noon at the top).
+`computeClockData()` maps the day's events to hours. The events are cached per local day; only the
+dashed line of the moon's passage depends on the time of day.
 
-Gezeichnet wird inkrementell, weil das komplette Zifferblatt auf dem Gerät spürbar dauert:
+Drawing is incremental, because the full dial takes noticeable time on the device:
 
-- **Komplett neu** beim ersten Mal, bei Tageswechsel und wenn sich Zeiger oder Segment ändern.
-- **Minütlich** wird nur der alte Stundenzeiger schwarz übermalt, die Elemente in seiner Nähe werden
-  neu gezeichnet (`NEAR_HOURS`), und der neue Zeiger wird gesetzt.
-- **Mondsymbol** alle 5 Minuten und beim Horizontdurchgang (Tönung).
-- **Telegram-Verbindung:** Die unteren 5 Pixel der 0-Uhr-Markierung sind weiß, wenn Telegram eingerichtet,
-  aber nicht erreichbar ist. Die Uhr fragt dazu `telegramConnectionLost()` aus
-  [Telegram.ino](src/Telegram.ino) ab; ändert sich der Zustand, werden nur diese Pixel neu gezeichnet.
+- **Full redraw** the first time, at day change and when hands or segment change.
+- **Every minute** only the old hour hand is painted over in black, the elements near it are redrawn
+  (`NEAR_HOURS`), and the new hand is drawn.
+- **Moon symbol** every 5 minutes and when crossing the horizon (tint).
+- **Telegram connection:** the lowest 5 pixels of the midnight marker are white while Telegram is
+  configured but not reachable. The clock queries `telegramConnectionLost()` from
+  [Telegram.ino](src/Telegram.ino); if the state changes, only these pixels are redrawn.
 
-Ring und Mondsegment werden pixelweise um den echten Mittelpunkt (119,5 | 119,5) gezeichnet, damit
-sie rund und symmetrisch sind. Ob ein Pixel im Segment liegt, ergibt sich ohne Winkelfunktion aus den
-Vorzeichen von Kreuz- und Skalarprodukt mit den Grenzstrahlen. Dicke Linien setzen sich aus zwei Dreiecken zusammen, weil
-Adafruit_GFX keine dicken Linien kennt. Senkrechte und waagerechte Linien sind Rechtecke.
+Ring and moon segment are drawn pixel by pixel around the true centre (119.5 | 119.5) so they are
+round and symmetric. Whether a pixel lies in the segment follows, without trigonometric functions,
+from the signs of cross and dot product with the boundary rays. Thick lines consist of two triangles,
+because Adafruit_GFX has no thick lines. Vertical and horizontal lines are rectangles.
 
-**Bild für Telegram (`/clock`):** `clockImageBegin()` zeichnet Ring, Segment, Zeiger und Ziffern wie beim
-kompletten Neuzeichnen, aber in eine eigene Zeichenfläche mit 4 Bit je Pixel (die Uhr hat weniger als
-16 Farben, 28,8 KB statt 115 KB für RGB565). Das Mondsymbol wird erst beim Abholen der Pixel in
-`clockImagePixel()` berechnet, wie in `moon_render` ohne Bildpuffer. Das funktioniert, weil sich das
-Mondsymbol mit keinem anderen Element überschneidet. Der Zeichenzustand des Displays bleibt
-unberührt, das Bild entsteht also auch im Mond-Modus.
+**Image for Telegram (`/clock`):** `clockImageBegin()` draws ring, segment, hands and digits as in a
+full redraw, but into a separate canvas with 4 bits per pixel (the clock has fewer than 16 colours,
+28.8 KB instead of 115 KB for RGB565). The moon symbol is only computed when the pixels are fetched
+in `clockImagePixel()`, without an image buffer as in `moon_render`. This works because the moon
+symbol does not overlap any other element. The display's drawing state stays untouched, so the
+image can also be created in moon mode.
 
-## Telegram und Pushover
+## Telegram and Pushover
 
-[Telegram.ino](src/Telegram.ino) pollt alle 3 Sekunden ohne Long-Polling, damit die Anzeige weiterläuft.
+[Telegram.ino](src/Telegram.ino) polls every 3 seconds without long polling, so the display keeps
+running.
 
-**Verbindungsstatus:** `updateTelegramConnection()` prüft mit `getMe`, ob Telegram erreichbar ist,
-bei bestehender Verbindung einmal pro Minute, sonst alle 10 Sekunden; ohne WLAN gilt Telegram als nicht
-erreichbar. `getUpdates` taugt dafür nicht, weil es „keine neuen Nachrichten“ und „keine Verbindung“
-beide mit 0 beantwortet. Die Uhr zeigt den Zustand an (siehe Uhren-Modus). Ist Telegram nicht
-eingerichtet, gilt die Verbindung nicht als verloren.
-Nach einer fehlgeschlagenen Prüfung wird der Client immer geschlossen, und ohne Verbindung fällt
-`getUpdates` aus, damit der Loop nicht auf Timeouts wartet. Die Library wartet 5 s statt 1,5 s auf
-Antworten und nimmt Updates bis 4000 Byte an.
+**Connection state:** `updateTelegramConnection()` checks with `getMe` whether Telegram is reachable,
+once per minute while connected, otherwise every 10 seconds; without Wi-Fi Telegram counts as not
+reachable. `getUpdates` is not suitable for this, because it answers both "no new messages" and "no
+connection" with 0. The clock shows the state (see clock mode). If Telegram is not configured, the
+connection does not count as lost.
+After a failed check the client is always closed, and without a connection `getUpdates` is skipped so
+the loop does not wait for timeouts. The library waits 5 s instead of 1.5 s for responses and accepts
+updates up to 4000 bytes.
 
-**Unlesbare Updates:** Kann die Library ein Update nicht parsen (z. B. zu groß), liefert
-`getUpdates` 0, ohne den Offset weiterzurücken, und alle folgenden Nachrichten hängen.
-`skipUnreadableUpdate()` holt deshalb nach jeder Verbindungsprüfung das nächste anstehende Update
-selbst; steht dieselbe `update_id` bei zwei Prüfungen hintereinander an, wird sie übersprungen.
+**Unreadable updates:** if the library cannot parse an update (e.g. too large), `getUpdates` returns
+0 without advancing the offset, and all following messages get stuck. `skipUnreadableUpdate()`
+therefore fetches the next pending update itself after each connection check; if the same
+`update_id` is pending at two consecutive checks, it is skipped.
 
-**Wer darf was:**
+**Who may do what:**
 
-- Befehle werden nur akzeptiert, wenn der Absender `TELEGRAM_CHAT_ID` ist, im privaten Chat oder in
-  der Gruppe `TELEGRAM_GROUP_ID`. Alles andere wird ignoriert. In der Gruppe reagiert der Bot nur auf
-  Befehle, nicht auf normalen Text und nicht auf `/befehl@AndererBot`.
-- Antworten gehen an den Chat, aus dem der Befehl kam.
+- Commands are only accepted if the sender is `TELEGRAM_CHAT_ID`, in the private chat or in the
+  group `TELEGRAM_GROUP_ID`. Everything else is ignored. In the group the bot only reacts to
+  commands, not to ordinary text and not to `/command@OtherBot`.
+- Replies go to the chat the command came from.
 
-**Täglicher Ablauf zur Berichtszeit** (`configAutoTime`, unabhängig voneinander getrackt, mit
-Wiederholung bei Fehlschlag). Der Bericht wird pro Durchlauf einmal berechnet und an alle fälligen
-Ziele gesendet:
+**Daily schedule at the report time** (`configAutoTime`, each target tracked independently, retried
+on failure). The report is computed once per run and sent to all due targets:
 
-| Ziel | Inhalt | Wiederholung |
+| Target | Content | Retry |
 |---|---|---|
-| Telegram, privater Chat | Tagesbericht | beim nächsten Durchlauf |
-| Telegram, Gruppe | Tagesbericht | beim nächsten Durchlauf |
-| Pushover | Tagesbericht | alle 5 Minuten |
-| Bot-Profilbild und Gruppenbild | gerendertes Mondbild | alle 15 Minuten, nur das fehlgeschlagene Ziel |
+| Telegram, private chat | daily report | next run |
+| Telegram, group | daily report | next run |
+| Pushover | daily report | every 5 minutes |
+| Bot profile photo and group photo | rendered moon image | every 15 minutes, only the failed target |
 
-Das Profil- und das Gruppenbild entstehen aus **einem** JPEG (240×240, in einem temporären 48-KB-Puffer, im
-Flash wird nichts gespeichert). Die Bibliothek `UniversalTelegramBot` kennt `setMyProfilePhoto` und
-`setChatPhoto` nicht; deshalb baut `uploadJpeg()` die multipart-Anfrage selbst.
+Profile and group photo are created from **one** JPEG (240×240, in a temporary 48 KB buffer, nothing
+is stored in flash). The `UniversalTelegramBot` library does not know `setMyProfilePhoto` and
+`setChatPhoto`, so `uploadJpeg()` builds the multipart request itself.
 
-[Pushover.ino](src/Pushover.ino) ist nur ausgehend. Es öffnet pro Nachricht eine eigene TLS-Verbindung und
-gibt sie danach wieder frei, damit der Speicher für TLS nicht dauerhaft belegt ist.
+[Pushover.ino](src/Pushover.ino) is outgoing only. It opens a separate TLS connection per message and
+releases it afterwards, so the memory for TLS is not permanently occupied.
 
-Telegram und Pushover sind optional und unabhängig. Fehlen die Zugangsdaten in `credentials.h`, ist der
-jeweilige Teil abgeschaltet. Pushover braucht kein Telegram.
+Telegram and Pushover are optional and independent. If the credentials in `credentials.h` are
+missing, the respective part is disabled. Pushover does not need Telegram.
 
-## Befehle
+## Commands
 
-[Commands.ino](src/Commands.ino) enthält **eine** Tabelle `COMMANDS` für beide Kanäle. Jeder Eintrag hat
-einen englischen Namen, eine Syntax (`usage`), eine übersetzte Beschreibung (`Txt`), die Kanäle
-(`CH_SERIAL`, `CH_TELEGRAM`) und einen Handler. Aus der Tabelle entstehen die Hilfe (`help`) und das
-Befehlsmenü von Telegram (`buildBotCommandsJson()` für `setMyCommands`).
+[Commands.ino](src/Commands.ino) contains **one** table `COMMANDS` for both channels. Each entry has
+an English name, a syntax (`usage`), a translated description (`Txt`), the channels (`CH_SERIAL`,
+`CH_TELEGRAM`) and a handler. The help (`help`) and the Telegram command menu
+(`buildBotCommandsJson()` for `setMyCommands`) are generated from the table.
 
-- **Seriell:** `readSerialCommands()` in [MondPhase.ino](src/MondPhase.ino) sammelt Zeichen bis zum
-  Zeilenende (höchstens 99) und ruft `runCommand(CH_SERIAL, …)` auf. HTML-Antworten (`moon`) werden ohne
-  `<pre>`-Tags ausgegeben.
-- **Telegram:** `handleCommand()` in [Telegram.ino](src/Telegram.ino) entfernt `@BotName`, ignoriert
-  Befehle an andere Bots und ruft `runCommand(CH_TELEGRAM, …)` auf. Die Zugriffsregeln (siehe unten)
-  prüft `handleTelegram()` vorher.
-- `runCommand()` nimmt den Namen mit oder ohne `/`, ignoriert Groß-/Kleinschreibung und lehnt Befehle
-  ab, die es im Kanal nicht gibt. Ein Handler bekommt den Rest der Zeile als `args` und gibt eine
-  `Reply` zurück; ist der Text leer, hat er schon selbst geantwortet (Bilder).
-- **Einstellungsbefehle** (`location`, `options`, `mode`, `daily`, `timezone`, `language`, seriell
-  `time`, `wifi`) zeigen ohne Argument den Wert und die Syntax, mit Argument setzen sie ihn, rufen
-  `saveConfig()` und gegebenenfalls `requestRedraw()` oder `resetAutoReportDay()` auf und zeigen danach
-  den neuen Wert. Einen eigenen `config`-Befehl gibt es nicht.
+- **Serial:** `readSerialCommands()` in [MondPhase.ino](src/MondPhase.ino) collects characters up to
+  the end of the line (at most 99) and calls `runCommand(CH_SERIAL, …)`. HTML replies (`moon`) are
+  printed without the `<pre>` tags.
+- **Telegram:** `handleCommand()` in [Telegram.ino](src/Telegram.ino) strips `@BotName`, ignores
+  commands addressed to other bots and calls `runCommand(CH_TELEGRAM, …)`. The access rules (see
+  above) are checked beforehand in `handleTelegram()`.
+- `runCommand()` accepts the name with or without `/`, ignores case and rejects commands that do not
+  exist on the channel. A handler receives the rest of the line as `args` and returns a `Reply`; if
+  the text is empty, the handler has already answered itself (images).
+- **Settings commands** (`location`, `options`, `mode`, `daily`, `timezone`, `language`, serial
+  `time`, `wifi`) show the value and the syntax without an argument; with an argument they set it,
+  call `saveConfig()` and, where needed, `requestRedraw()` or `resetAutoReportDay()`, and then show
+  the new value. There is no separate `config` command.
 
-## Sprachen
+## Languages
 
-Alle Ausgaben an Nutzer (Antworten, Hilfe, Tagesbericht, Bildunterschriften) laufen über
-`tr(Txt::…)` aus [i18n.h](src/i18n.h); Log-Ausgaben auf der seriellen Schnittstelle bleiben deutsch.
+All output to users (replies, help, daily report, image captions) goes through `tr(Txt::…)` from
+[i18n.h](src/i18n.h); log output on the serial interface stays German.
 
-- [i18n_ids.h](src/i18n_ids.h) listet alle Text-IDs (X-Macro `TEXT_IDS`). Endet eine ID auf `Fmt`, ist
-  der Text ein printf-Format; Formate mit `textf()` aus [messages.h](src/messages.h) füllen. Endet sie auf
-  `Pattern`, ist er ein `strftime`-Format.
-- Jede Sprache steht in [lang/](src/lang/) als Liste von Paaren `{Txt::…, "…"}` in beliebiger
-  Reihenfolge. In [i18n.cpp](src/i18n.cpp) wird sie mit einer Zeile in `LANGUAGES` registriert; `language()`
-  sortiert die Texte zur Compilezeit in ein Array, `tr()` ist ein Arrayzugriff. Die Texte liegen im Flash.
-- **Englisch** ist die Referenz und muss jede ID enthalten. In anderen Sprachen fehlende IDs erscheinen
-  englisch, so lässt sich eine Sprache schrittweise übersetzen.
-- `static_assert` prüft beim Bauen: fehlende IDs in Englisch, doppelte IDs und bei `…Fmt` gleiche
-  Platzhalter (Typ und Reihenfolge) wie im Englischen, weil `snprintf` von newlib keine
-  Positionsargumente kennt. Die Meldung nennt Sprache und ID, z. B.
-  `static assertion failed: de: Platzhalter weichen von en ab: DailyFmt`. Dafür nutzt der Code
-  `static_assert` mit erzeugter Meldung (C++26, ab GCC 14).
-- Monatsnamen über `%b` gibt newlib nur englisch aus; andere Sprachen nehmen Ziffern.
-- Die Mondphase liefert `ephemeris` als `MoonPhase`; den Namen liefert `moonPhaseName()` aus i18n. So
-  bleiben `astro` und `ephemeris` ohne Text.
-- Nach einem Wechsel mit `language` setzt Telegram das Befehlsmenü mit den neuen Beschreibungen neu.
+- [i18n_ids.h](src/i18n_ids.h) lists all text IDs (X macro `TEXT_IDS`). If an ID ends in `Fmt`, the
+  text is a printf format; fill it with `textf()` from [messages.h](src/messages.h). If it ends in
+  `Pattern`, it is a `strftime` format.
+- Each language lives in [lang/](src/lang/) as a list of pairs `{Txt::…, "…"}` in any order. It is
+  registered with one line in `LANGUAGES` in [i18n.cpp](src/i18n.cpp); `language()` sorts the texts
+  into an array at compile time, so `tr()` is an array access. The texts are stored in flash.
+- **English** is the reference and must contain every ID. IDs missing in other languages appear in
+  English, so a language can be translated step by step.
+- `static_assert` checks at build time: missing IDs in English, duplicate IDs, and for `…Fmt` the
+  same placeholders (type and order) as in English, because newlib's `snprintf` has no positional
+  arguments. The message names language and ID, e.g.
+  `static assertion failed: de: Platzhalter weichen von en ab: DailyFmt`. This uses `static_assert`
+  with a generated message (C++26, GCC 14 and later).
+- newlib only prints English month names for `%b`; other languages use digits.
+- After switching with `language`, Telegram sets the command menu again with the new descriptions.
 
-## Konfiguration
+## Configuration
 
-Alle Einstellungen liegen als RAM-Kopie in globalen Variablen in [Config.ino](src/Config.ino) und werden
-bei Änderungen mit `saveConfig()` in den NVS-Flash (`Preferences`, Namespace `moon-cfg`) geschrieben.
-Sie lassen sich über die serielle Schnittstelle oder über Telegram ändern; beide setzen die Variablen
-und rufen `saveConfig()`.
+All settings are kept as a RAM copy in global variables in [Config.ino](src/Config.ino) and are
+written to NVS flash (`Preferences`, namespace `moon-cfg`) with `saveConfig()` when they change.
+They are changed with the commands (serial or Telegram), which set the variables and call
+`saveConfig()`.
 
-| Schlüssel | Bedeutung |
+| Key | Meaning |
 |---|---|
-| `lat`, `lon` | Standort in Dezimalgrad (im RAM als `configLocation`, Typ `astro::GeoLocation`) |
-| `elev` | Höhe über dem Meeresspiegel in Metern |
-| `opts` | Darstellungsoptionen (Bitfeld) |
-| `auto`, `atime` | Tagesbericht ein/aus, Uhrzeit in Minuten nach Mitternacht |
-| `tz` | POSIX-Zeitzone |
-| `mode` | Anzeigemodus (Mond oder Uhr) |
-| `lang` | Sprache als Code (`de`, `en`); im RAM als Index `configLanguage` der registrierten Sprachen |
+| `lat`, `lon` | Location in decimal degrees (in RAM as `configLocation`, type `astro::GeoLocation`) |
+| `elev` | Elevation above sea level in metres |
+| `opts` | Display options (bit mask) |
+| `auto`, `atime` | Daily report on/off, time in minutes after midnight |
+| `tz` | POSIX time zone |
+| `mode` | Display mode (moon or clock) |
+| `lang` | Language as code (`de`, `en`); in RAM as index `configLanguage` of the registered languages |
 
-Zugangsdaten (WLAN, Telegram, Pushover) stehen **nicht** im NVS, sondern fest im Programm über
-`credentials.h`. Diese Datei ist in der `.gitignore`; als Vorlage dient `credentials.h.template`.
+Credentials (Wi-Fi, Telegram, Pushover) are **not** stored in NVS but compiled into the program via
+`credentials.h`. This file is in `.gitignore`; `credentials.h.template` serves as a template.
 
-## Speicher und Ressourcen
+## Memory and resources
 
-- Kein Bildpuffer; Pixel werden einzeln berechnet und zeilenweise gezeichnet (siehe oben). Das spart RAM,
-  macht aber das Rendern rechenintensiv.
-- Der Zwischenspeicher für Mondauf-/-untergang belegt 312 Byte.
-- Die SPI-Übertragung zum Display (40 MHz) ist kein Engpass: Ein ganzes Bild braucht etwa 25–30 ms,
-  die Rechenzeit dominiert.
-- Die Texturen liegen im Flash (`PROGMEM`). Die Partitionstabelle `huge_app.csv` schafft Platz dafür.
-- Das Profil-JPEG belegt kurzzeitig 48 KB Heap, das JPEG-Encoder-Objekt etwa 3 KB (auf dem Heap, nicht
-  auf dem Stack).
-- Das Uhrenbild für `/clock` belegt während des Uploads 28,8 KB Heap.
-- Telegram nutzt einen dauerhaften `WiFiClientSecure`, Pushover legt pro Nachricht einen eigenen an.
+- No image buffer; pixels are computed individually and drawn line by line (see above). This saves
+  RAM but makes rendering computationally expensive.
+- The cache for moonrise/moonset occupies 312 bytes.
+- The SPI transfer to the display (40 MHz) is not a bottleneck: a full image takes about 25–30 ms,
+  computation dominates.
+- The textures are in flash (`PROGMEM`). The partition table `huge_app.csv` makes room for them.
+- The profile JPEG briefly occupies 48 KB of heap, the JPEG encoder object about 3 KB (on the heap,
+  not on the stack).
+- The clock image for `/clock` occupies 28.8 KB of heap during the upload.
+- Telegram uses a persistent `WiFiClientSecure`, Pushover creates its own per message.
 
-## Vorschau auf dem PC
+## Preview on the PC
 
-Die `.cpp`-Dateien lassen sich ohne Gerät übersetzen. [tools/preview/](tools/preview/) enthält ein
-Programm, das Uhr und Mondbild als PNG ausgibt. Dazu liefert `tools/preview/stub/` einen minimalen
-Ersatz für die Arduino-Header, und `Adafruit_GFX` zeichnet in einen Speicherpuffer statt auf das Display.
-`drawClockFace()` nimmt deshalb ein `ClockDisplay`: auf dem Gerät `Adafruit_SPITFT` (schnelles
-`drawRGBBitmap`), in der Vorschau `Adafruit_GFX`.
-Der Aufruf (`make clock`, `make moon`) steht im [Makefile](Makefile) und in der readme.md.
+The `.cpp` files compile without the device. [tools/preview/](tools/preview/) contains a program that
+writes the clock and the moon image as PNG. `tools/preview/stub/` provides a minimal replacement for
+the Arduino headers, and `Adafruit_GFX` draws into a memory buffer instead of the display.
+`drawClockFace()` therefore takes a `ClockDisplay`: on the device `Adafruit_SPITFT` (fast
+`drawRGBBitmap`), in the preview `Adafruit_GFX`.
+The invocation (`make clock`, `make moon`) is in the [Makefile](Makefile) and in the readme.md.
 
-So lässt sich Zeichencode ändern und prüfen, ohne jedes Mal zu flashen. Der Preview-Code ersetzt
-nur `utcToLocal()`, `telegramConnectionLost()` und die Konfigurationsvariablen aus
+This way drawing code can be changed and checked without flashing every time. The preview code only
+replaces `utcToLocal()`, `telegramConnectionLost()` and the configuration variables from
 [Config.ino](src/Config.ino).
 
-## Erweitern
+## Extending
 
-- **Neue Darstellungsoption:** Bit in [moon_render.h](src/moon_render.h) ergänzen, in `moonPixel()` oder
-  `prepareMoonRender()` auswerten, dann in `optionsStatus()` ([Commands.ino](src/Commands.ino)) mit
-  einem Text `Opt…` und in den Optionstabellen der readmes nachziehen.
-- **Neuer Befehl:** Handler und Eintrag in `COMMANDS` ([Commands.ino](src/Commands.ino)), Beschreibung als
-  `Cmd…` in [i18n_ids.h](src/i18n_ids.h) und den Sprachdateien; Hilfe und Telegram-Menü folgen
-  automatisch. Befehlstabelle in beiden readmes ergänzen.
-- **Neuer Text:** ID in [i18n_ids.h](src/i18n_ids.h), Text in [lang/en.h](src/lang/en.h), weitere
-  Sprachen optional.
-- **Neue Sprache:** [lang/en.h](src/lang/en.h) nach `lang/<code>.h` kopieren, `LANG_EN` umbenennen und
-  übersetzen, in [i18n.cpp](src/i18n.cpp) einbinden und eine Zeile in `LANGUAGES` ergänzen.
-- **Neuer Anzeigemodus:** Konstante in [display_mode.h](src/display_mode.h), Zeichenfunktion in `loop()`
-  einhängen, `requestRedraw()` anpassen und den Befehl `mode` ([Commands.ino](src/Commands.ino)) erweitern.
-- **Neuer Benachrichtigungskanal:** wie Pushover als eigene Datei mit `send…()` und `…Enabled()` anlegen
-  und in `checkAutoReport()` mit eigenem Tag-Zähler einhängen.
+- **New display option:** add the bit in [moon_render.h](src/moon_render.h), evaluate it in
+  `moonPixel()` or `prepareMoonRender()`, then add it to `optionsStatus()`
+  ([Commands.ino](src/Commands.ino)) with an `Opt…` text and to the option tables of both readmes.
+- **New command:** handler and entry in `COMMANDS` ([Commands.ino](src/Commands.ino)), description as
+  `Cmd…` in [i18n_ids.h](src/i18n_ids.h) and the language files; help and Telegram menu follow
+  automatically. Add it to the command table of both readmes.
+- **New text:** ID in [i18n_ids.h](src/i18n_ids.h), text in [lang/en.h](src/lang/en.h), other
+  languages optional.
+- **New language:** copy [lang/en.h](src/lang/en.h) to `lang/<code>.h`, rename `LANG_EN` and
+  translate, include it in [i18n.cpp](src/i18n.cpp) and add one line to `LANGUAGES`.
+- **New display mode:** constant in [display_mode.h](src/display_mode.h), hook the drawing function
+  into `loop()`, adjust `requestRedraw()` and extend the `mode` command
+  ([Commands.ino](src/Commands.ino)).
+- **New notification channel:** like Pushover, as its own file with `send…()` and `…Enabled()`, and
+  hook it into `checkAutoReport()` with its own day counter.
