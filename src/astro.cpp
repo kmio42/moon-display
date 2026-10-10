@@ -25,40 +25,6 @@ static inline constexpr double horner(const double x, const double c0, const C..
     return c0 + x * horner(x, c...);
 }
 
-/**
- * Winkel aus Grad, Bogenminuten und Bogensekunden.
- * @return Winkel [°]
- */
-static inline constexpr double dms(const double degrees, const double minutes, const double seconds) {
-    return degrees + minutes / 60.0 + seconds / 3600.0;
-}
-
-// ---------------------------------------------------------------
-//  Winkel-Normalisierung
-// ---------------------------------------------------------------
-
-/**
- * Normalisiert einen Winkel auf den Bereich [0°, 360°).
- * @param angle Winkel [°]
- * @return Normalisierter Winkel [°]
- */
-double normalizeDegrees(const double angle) {
-    const double normalized = fmod(angle, 360.0);
-    return normalized < 0 ? normalized + 360.0 : normalized;
-}
-
-/**
- * Normalisiert einen Winkel auf den Bereich (−π, π].
- * @param angle Winkel [rad]
- * @return Normalisierter Winkel [rad]
- */
-double normalizeRadiansSigned(const double angle) {
-    double normalized = fmod(angle, 2 * M_PI);
-    if (normalized < 0) normalized += 2 * M_PI;
-    if (normalized > M_PI) normalized -= 2 * M_PI;
-    return normalized;
-}
-
 // ---------------------------------------------------------------
 //  Julianischer Tag und Sternzeit (Kapitel 7, 11)
 // ---------------------------------------------------------------
@@ -70,9 +36,8 @@ double normalizeRadiansSigned(const double angle) {
  * @param month Monat [1..12]
  * @param day Tag [1..31]
  * @param hours Uhrzeit [h]
- * @return Julianischer Tag [JD]
  */
-double calculateJulianDate(int year, int month, const int day, const double hours) {
+JulianDay JulianDay::fromCalendar(int year, int month, const int day, const double hours) {
     // Januar und Februar zählen als 13. und 14. Monat des Vorjahres
     if (month <= 2) {
         year -= 1;
@@ -85,45 +50,43 @@ double calculateJulianDate(int year, int month, const int day, const double hour
     const int B = julian ? 0 : 2 - A + A / 4;
 
     // Formel 7.1
-    return static_cast<int>(365.25 * (year + 4716))
-         + static_cast<int>(30.6001 * (month + 1))
-         + day + B - 1524.5
-         + hours / 24.0;
+    return JulianDay(static_cast<int>(365.25 * (year + 4716))
+                     + static_cast<int>(30.6001 * (month + 1))
+                     + day + B - 1524.5
+                     + hours / 24.0);
 }
 
 /**
- * Zeit seit der Epoche J2000.0, Formel 11.1 bzw. 21.1.
- * @param jd Julianischer Tag [JD]
- * @return T [Julianische Jahrhunderte]
+ * Julianischer Tag für eine Zeit in UTC als struct tm.
  */
-double calculateJulianCenturies(const double jd) {
-    return (jd - 2451545.0) / 36525.0;
+JulianDay JulianDay::fromTm(const struct tm& utc) {
+    return fromCalendar(utc.tm_year + 1900, utc.tm_mon + 1, utc.tm_mday,
+                        utc.tm_hour + utc.tm_min / 60.0 + utc.tm_sec / 3600.0);
 }
 
 /**
  * Mittlere Sternzeit in Greenwich für einen beliebigen Zeitpunkt, Formel 11.4.
- * @param jd Julianischer Tag [JD, UT]
- * @return Sternzeit θ0 [h], im Bereich [0, 24)
+ * @param jd Julianischer Tag (UT)
+ * @return Sternzeit θ0
  */
-double calculateGreenwichSiderealTime(const double jd) {
-    const double T = calculateJulianCenturies(jd);
+SiderealTime calculateGreenwichSiderealTime(const JulianDay jd) {
+    const double T = jd.centuries();
 
     // Formel 11.4 [°]
-    const double theta0 = 280.46061837 + 360.98564736629 * (jd - 2451545.0)
+    const double theta0 = 280.46061837 + 360.98564736629 * (jd.value() - 2451545.0)
                         + T * T * horner(T, 0.000387933, -1.0 / 38710000.0);
 
-    return normalizeDegrees(theta0) / 15.0;
+    return SiderealTime(Angle::fromDeg(theta0));
 }
 
 /**
  * Lokale Sternzeit θ = θ0 − L (Kapitel 12; dort ist die Länge L West positiv).
- * @param jd Julianischer Tag [JD, UT]
+ * @param jd Julianischer Tag (UT)
  * @param location Beobachtungsort (Länge Ost positiv)
- * @return θ [rad], im Bereich [0, 2π)
+ * @return Lokale Sternzeit θ
  */
-double calculateLocalSiderealTime(const double jd, const GeoLocation& location) {
-    const double theta = calculateGreenwichSiderealTime(jd) * 15.0 * DEG2RAD + location.longitude;
-    return fmod(theta + 2 * M_PI, 2 * M_PI);
+SiderealTime calculateLocalSiderealTime(const JulianDay jd, const GeoLocation& location) {
+    return calculateGreenwichSiderealTime(jd) + location.longitude;
 }
 
 // ---------------------------------------------------------------
@@ -132,42 +95,42 @@ double calculateLocalSiderealTime(const double jd, const GeoLocation& location) 
 
 /**
  * Mittlere Schiefe der Ekliptik ε0, Formel 21.2.
- * @param jd Julianischer Tag [JD]
- * @return ε0 [rad]
+ * @param jd Julianischer Tag
+ * @return ε0
  */
-double calculateObliquity(const double jd) {
-    const double T = calculateJulianCenturies(jd);
+Angle calculateObliquity(const JulianDay jd) {
+    const double T = jd.centuries();
     // 23°26′21″.448 − 46″.8150 T − 0″.00059 T² + 0″.001813 T³
-    return dms(23, 26, horner(T, 21.448, -46.8150, -0.00059, 0.001813)) * DEG2RAD;
+    return Angle::fromDms(23, 26, horner(T, 21.448, -46.8150, -0.00059, 0.001813));
 }
 
 // Mittlere Größen der Sonne bei niedriger Genauigkeit (Kapitel 24)
 struct SunArguments {
-    double L0;      // Geometrische mittlere Länge [°], Formel 24.2
-    double M;       // Mittlere Anomalie [rad], Formel 24.3
+    Angle L0;       // Geometrische mittlere Länge, Formel 24.2
+    Angle M;        // Mittlere Anomalie, Formel 24.3
     double e;       // Exzentrizität der Erdbahn [1], Formel 24.4
-    double C;       // Mittelpunktsgleichung [°]
+    Angle C;        // Mittelpunktsgleichung
 };
 
 static inline SunArguments sunArguments(const double T) {
-    const double M = horner(T, 357.52910, 35999.05030, -0.0001559, -0.00000048) * DEG2RAD;
+    const Angle M = Angle::fromDeg(horner(T, 357.52910, 35999.05030, -0.0001559, -0.00000048));
     return {
-        .L0 = normalizeDegrees(horner(T, 280.46645, 36000.76983, 0.0003032)),
+        .L0 = Angle::fromDeg(horner(T, 280.46645, 36000.76983, 0.0003032)).normalized(),
         .M  = M,
         .e  = horner(T, 0.016708617, -0.000042037, -0.0000001236),
-        .C  = horner(T, 1.914600, -0.004817, -0.000014) * sin(M)
-            + horner(T, 0.019993, -0.000101) * sin(2 * M)
-            + 0.000290 * sin(3 * M),
+        .C  = Angle::fromDeg(horner(T, 1.914600, -0.004817, -0.000014) * sin(M)
+                             + horner(T, 0.019993, -0.000101) * sin(2 * M)
+                             + 0.000290 * sin(3 * M)),
     };
 }
 
 /**
  * Exzentrizität der Erdbahn, Formel 24.4.
- * @param jd Julianischer Tag [JD]
+ * @param jd Julianischer Tag
  * @return Exzentrizität e [1]
  */
-double calculateEarthEccentricity(const double jd) {
-    return sunArguments(calculateJulianCenturies(jd)).e;
+double calculateEarthEccentricity(const JulianDay jd) {
+    return sunArguments(jd.centuries()).e;
 }
 
 /**
@@ -175,15 +138,15 @@ double calculateEarthEccentricity(const double jd) {
  * wahre geometrische Länge ☉ = L0 + C, bezogen auf das mittlere Äquinoktium des Datums,
  * Breite 0 (sie ist nie größer als 1″.2) und Radiusvektor
  * R = 1.000001018·(1 − e²)/(1 + e·cos ν) mit ν = M + C (Formel 24.5).
- * @param jd Julianischer Tag [JD]
- * @return Länge ☉ und Breite [rad], Entfernung R [km]
+ * @param jd Julianischer Tag
+ * @return Länge ☉, Breite und Entfernung R [km]
  */
-Ecliptic calculateSunPosition(const double jd) {
-    const SunArguments sun = sunArguments(calculateJulianCenturies(jd));
-    const double nu = sun.M + sun.C * DEG2RAD;
+Ecliptic calculateSunPosition(const JulianDay jd) {
+    const SunArguments sun = sunArguments(jd.centuries());
+    const Angle nu = sun.M + sun.C;
     return {
-        .longitude = (sun.L0 + sun.C) * DEG2RAD,
-        .latitude  = 0.0,
+        .longitude = sun.L0 + sun.C,
+        .latitude  = Angle(),
         .distance  = EARTH_SEMI_MAJOR_AXIS * (1 - sun.e * sun.e) / (1 + sun.e * cos(nu)) * AU_KM,
     };
 }
@@ -191,47 +154,47 @@ Ecliptic calculateSunPosition(const double jd) {
 /**
  * Wahre Anomalie der Erde aus der Keplergleichung E = M + e·sin E (Formel 29.5),
  * iterativ gelöst, und tan(ν/2) = √((1+e)/(1−e))·tan(E/2) (Formel 29.1).
- * @param jd Julianischer Tag [JD]
- * @return Wahre Anomalie ν [rad]
+ * @param jd Julianischer Tag
+ * @return Wahre Anomalie ν
  */
-double calculateEarthTrueAnomaly(const double jd) {
-    const SunArguments sun = sunArguments(calculateJulianCenturies(jd));
+Angle calculateEarthTrueAnomaly(const JulianDay jd) {
+    const SunArguments sun = sunArguments(jd.centuries());
 
-    // Exzentrische Anomalie E [rad], Formel 29.5
-    double E = sun.M;
+    // Exzentrische Anomalie E, Formel 29.5 (in Radiant gerechnet)
+    Angle E = sun.M;
     for (int i = 0; i < 10; i++) {
-        E = sun.M + sun.e * sin(E);
+        E = sun.M + Angle::fromRad(sun.e * sin(E));
     }
 
     // Formel 29.1
-    return 2.0 * atan2(sqrt(1 + sun.e) * sin(E / 2), sqrt(1 - sun.e) * cos(E / 2));
+    return 2.0 * Angle::atan2(sqrt(1 + sun.e) * sin(E / 2), sqrt(1 - sun.e) * cos(E / 2));
 }
 
 /**
  * Zeitgleichung nach Formel 27.1 mit geometrischer statt scheinbarer Rektaszension.
- * @param jd Julianischer Tag [JD]
+ * @param jd Julianischer Tag
  * @param withEarthTilt false: Rektaszension ohne Schiefe der Ekliptik (nur Anteil der Bahnexzentrizität)
  * @return Zeitgleichung [min], wahre minus mittlere Sonnenzeit
  */
-double calculateEquationOfTime(const double jd, const bool withEarthTilt) {
-    const SunArguments sun = sunArguments(calculateJulianCenturies(jd));
+double calculateEquationOfTime(const JulianDay jd, const bool withEarthTilt) {
+    const SunArguments sun = sunArguments(jd.centuries());
 
-    // Mittlere Länge der Sonne L0 [°], Formel 27.2 mit τ in Julianischen Jahrtausenden
-    const double tau = (jd - 2451545.0) / 365250.0;
-    const double L0 = normalizeDegrees(horner(tau, 280.4664567, 360007.6982779, 0.03032028,
-                                              1.0 / 49931.0, -1.0 / 15299.0, -1.0 / 1988000.0));
+    // Mittlere Länge der Sonne L0, Formel 27.2 mit τ in Julianischen Jahrtausenden
+    const double tau = jd.millennia();
+    const Angle L0 = Angle::fromDeg(horner(tau, 280.4664567, 360007.6982779, 0.03032028,
+                                           1.0 / 49931.0, -1.0 / 15299.0, -1.0 / 1988000.0)).normalized();
 
-    // Wahre Länge der Sonne [°], Kapitel 24
-    const double L = sun.L0 + sun.C;
-    const double eps = withEarthTilt ? calculateObliquity(jd) : 0.0;
+    // Wahre Länge der Sonne, Kapitel 24
+    const Angle L = sun.L0 + sun.C;
+    const Angle eps = withEarthTilt ? calculateObliquity(jd) : Angle();
 
-    // Rektaszension der Sonne [°], Formel 12.3 mit β = 0
-    const double alpha = normalizeDegrees(atan2(cos(eps) * sin(L * DEG2RAD), cos(L * DEG2RAD)) * RAD2DEG);
+    // Rektaszension der Sonne, Formel 12.3 mit β = 0
+    const Angle alpha = Angle::atan2(cos(eps) * sin(L), cos(L)).normalized();
 
     // Formel 27.1: E = L0 − 0°.0057183 − α + Δψ·cos ε. Die Konstante (Aberration und FK5) und
     // Δψ·cos ε (Nutation) bringen die scheinbare Rektaszension auf die geometrische; da α hier
-    // bereits geometrisch ist, entfallen beide. [°] → [min]
-    double E = (L0 - alpha) * 4;
+    // bereits geometrisch ist, entfallen beide. 1° entspricht 4 Zeitminuten.
+    double E = (L0 - alpha).deg() * 4;
 
     // Vielfache von 24 h entfernen; |E| ist immer kleiner als 20 min
     if (E > 60 * 12) E -= 24 * 60;
@@ -246,79 +209,79 @@ double calculateEquationOfTime(const double jd, const bool withEarthTilt) {
 
 /**
  * Ekliptikale in äquatoriale Koordinaten, Formeln 12.3 und 12.4.
- * @param ecliptic Ekliptikale Länge λ und Breite β [rad]; die Entfernung wird nicht benötigt
- * @param eps Schiefe der Ekliptik ε [rad], z. B. aus calculateObliquity
- * @return Rektaszension α und Deklination δ [rad]
+ * @param ecliptic Ekliptikale Länge λ und Breite β; die Entfernung wird nicht benötigt
+ * @param eps Schiefe der Ekliptik ε, z. B. aus calculateObliquity
+ * @return Rektaszension α und Deklination δ
  */
-Equatorial calculateEquatorial(const Ecliptic& ecliptic, const double eps) {
-    const double lambda = ecliptic.longitude;
-    const double beta = ecliptic.latitude;
+Equatorial calculateEquatorial(const Ecliptic& ecliptic, const Angle eps) {
+    const Angle lambda = ecliptic.longitude;
+    const Angle beta = ecliptic.latitude;
     return {
-        .ra  = atan2(sin(lambda) * cos(eps) - tan(beta) * sin(eps), cos(lambda)),     // Formel 12.3
-        .dec = asin(sin(beta) * cos(eps) + cos(beta) * sin(eps) * sin(lambda)),       // Formel 12.4
+        .ra  = Angle::atan2(sin(lambda) * cos(eps) - tan(beta) * sin(eps), cos(lambda)),     // Formel 12.3
+        .dec = Angle::asin(sin(beta) * cos(eps) + cos(beta) * sin(eps) * sin(lambda)),       // Formel 12.4
     };
 }
 
 /**
  * Äquatoriale in horizontale Koordinaten, Formeln 12.5 und 12.6.
- * @param equ Rektaszension und Deklination [rad]
- * @param localSiderealTime Lokale Sternzeit θ [rad]
+ * @param equ Rektaszension und Deklination
+ * @param localSiderealTime Lokale Sternzeit θ
  * @param location Beobachtungsort; benötigt wird nur die Breite φ, die Länge steckt bereits in θ
- * @return Azimut A (von Süden über Westen) und Höhe h [rad]
+ * @return Azimut A (von Süden über Westen) und Höhe h
  */
-Horizontal calculateHorizontal(const Equatorial& equ, const double localSiderealTime, const GeoLocation& location) {
-    const double latitude = location.latitude;
+Horizontal calculateHorizontal(const Equatorial& equ, const SiderealTime localSiderealTime, const GeoLocation& location) {
+    const Angle phi = location.latitude;
     // Lokaler Stundenwinkel H = θ − α
-    const double H = localSiderealTime - equ.ra;
+    const Angle H = localSiderealTime - equ.ra;
     return {
-        .azimuth  = atan2(sin(H), cos(H) * sin(latitude) - tan(equ.dec) * cos(latitude)),         // Formel 12.5
-        .altitude = asin(sin(latitude) * sin(equ.dec) + cos(latitude) * cos(equ.dec) * cos(H)),  // Formel 12.6
+        .azimuth  = Angle::atan2(sin(H), cos(H) * sin(phi) - tan(equ.dec) * cos(phi)),         // Formel 12.5
+        .altitude = Angle::asin(sin(phi) * sin(equ.dec) + cos(phi) * cos(equ.dec) * cos(H)),  // Formel 12.6
     };
 }
 
 /**
  * Parallaktischer Winkel q, Formel 13.1.
- * @param equ Rektaszension und Deklination [rad]
- * @param localSiderealTime Lokale Sternzeit θ [rad]
+ * @param equ Rektaszension und Deklination
+ * @param localSiderealTime Lokale Sternzeit θ
  * @param location Beobachtungsort; benötigt wird nur die Breite φ, die Länge steckt bereits in θ
- * @return q [rad], vor dem Meridiandurchgang negativ
+ * @return q, vor dem Meridiandurchgang negativ
  */
-double calculateParallacticAngle(const Equatorial& equ, const double localSiderealTime, const GeoLocation& location) {
-    const double latitude = location.latitude;
-    const double H = localSiderealTime - equ.ra;
-    return atan2(sin(H), tan(latitude) * cos(equ.dec) - sin(equ.dec) * cos(H));
+Angle calculateParallacticAngle(const Equatorial& equ, const SiderealTime localSiderealTime, const GeoLocation& location) {
+    const Angle phi = location.latitude;
+    const Angle H = localSiderealTime - equ.ra;
+    return Angle::atan2(sin(H), tan(phi) * cos(equ.dec) - sin(equ.dec) * cos(H));
 }
 
 /**
  * Topozentrische aus geozentrischen äquatorialen Koordinaten, Formeln 39.2 und 39.3.
  * ρ sin φ′ und ρ cos φ′ nach Kapitel 10 mit der Höhe des Beobachters über dem Meeresspiegel.
- * @param equ Geozentrische Rektaszension und Deklination [rad]
- * @param parallax Äquatoriale Horizontalparallaxe π [rad]
- * @param localSiderealTime Lokale Sternzeit θ [rad]
+ * @param equ Geozentrische Rektaszension und Deklination
+ * @param parallax Äquatoriale Horizontalparallaxe π
+ * @param localSiderealTime Lokale Sternzeit θ
  * @param location Beobachtungsort; benötigt werden Breite φ und Höhe H, die Länge steckt bereits in θ
- * @return Topozentrische Rektaszension und Deklination [rad]
+ * @return Topozentrische Rektaszension und Deklination
  */
-Equatorial calculateTopocentric(const Equatorial& equ, const double parallax, const double localSiderealTime,
+Equatorial calculateTopocentric(const Equatorial& equ, const Angle parallax, const SiderealTime localSiderealTime,
                                 const GeoLocation& location) {
-    const double latitude = location.latitude;
+    const Angle phi = location.latitude;
     // Kapitel 10: b/a des Erdellipsoids [1] und Höhe über dem Meeresspiegel [m]
     constexpr double ba = 0.99664719;
     const double height = location.elevation;
 
-    const double u = atan(ba * tan(latitude));
-    const double rhoSinPhi = ba * sin(u) + height / (EARTH_RADIUS * 1000.0) * sin(latitude);
-    const double rhoCosPhi = cos(u) + height / (EARTH_RADIUS * 1000.0) * cos(latitude);
+    const Angle u = Angle::atan(ba * tan(phi));
+    const double rhoSinPhi = ba * sin(u) + height / (EARTH_RADIUS * 1000.0) * sin(phi);
+    const double rhoCosPhi = cos(u) + height / (EARTH_RADIUS * 1000.0) * cos(phi);
 
-    // Geozentrischer Stundenwinkel H [rad]
-    const double H = localSiderealTime - equ.ra;
+    // Geozentrischer Stundenwinkel H
+    const Angle H = localSiderealTime - equ.ra;
 
-    // Formel 39.2: Δα [rad]
-    const double deltaAlpha = atan(-rhoCosPhi * sin(parallax) * sin(H)
-                                   / (cos(equ.dec) - rhoCosPhi * sin(parallax) * cos(H)));
+    // Formel 39.2: Δα
+    const Angle deltaAlpha = Angle::atan(-rhoCosPhi * sin(parallax) * sin(H)
+                                         / (cos(equ.dec) - rhoCosPhi * sin(parallax) * cos(H)));
 
-    // Formel 39.3: δ′ [rad]
-    const double dec = atan2((sin(equ.dec) - rhoSinPhi * sin(parallax)) * cos(deltaAlpha),
-                             cos(equ.dec) - rhoCosPhi * sin(parallax) * cos(H));
+    // Formel 39.3: δ′
+    const Angle dec = Angle::atan2((sin(equ.dec) - rhoSinPhi * sin(parallax)) * cos(deltaAlpha),
+                                   cos(equ.dec) - rhoCosPhi * sin(parallax) * cos(H));
 
     return { .ra = equ.ra + deltaAlpha, .dec = dec };
 }
@@ -351,27 +314,25 @@ double interpolate(const double y1, const double y2, const double y3, const doub
 /**
  * Genäherte Zeiten von Sonnenaufgang, Meridiandurchgang und Sonnenuntergang, Formeln 14.1 und 14.2
  * (ohne die Korrekturen Δm). Rektaszension und Deklination gelten für 0h UT.
- * @param jd Julianischer Tag [JD] eines Zeitpunkts des gewünschten UT-Tags
+ * @param jd Julianischer Tag eines Zeitpunkts des gewünschten UT-Tags
  * @param location Beobachtungsort
  * @return Zeiten [h UT]; bei Polartag oder Polarnacht weder Auf- noch Untergang
  */
-RiseTransitSet calculateSunRiseSet(const double jd, const GeoLocation& location) {
-    const double latitude = location.latitude;
+RiseTransitSet calculateSunRiseSet(const JulianDay jd, const GeoLocation& location) {
+    const Angle phi = location.latitude;
 
-    // Standardhöhe der Sonne h0 = −0°50′ [rad]
-    constexpr double h0 = -0.8333 * DEG2RAD;
+    // Standardhöhe der Sonne h0 = −0°50′
+    constexpr Angle h0 = -0.8333_deg;
 
-    const double midnight = round(jd) - 0.5;
+    const JulianDay midnight = jd.midnight();
     const Equatorial sun = calculateEquatorial(calculateSunPosition(midnight), calculateObliquity(midnight));
-    // Sternzeit Greenwich um 0h UT [°]
-    const double theta0 = calculateGreenwichSiderealTime(midnight) * 15.0;
+    const SiderealTime theta0 = calculateGreenwichSiderealTime(midnight);
 
-    // Formel 14.2, Durchgang m0 in Tagesbruchteilen; die Länge zählt im Buch West positiv
-    double m0 = fmod((sun.ra * RAD2DEG - location.longitude * RAD2DEG - theta0) / 360.0, 1.0);
-    m0 = fmod(m0 + 1.0, 1.0);
+    // Formel 14.2, Durchgang m0 = (α + L − θ0)/360° in Tagesbruchteilen; die Länge L zählt im Buch West positiv
+    const double m0 = (sun.ra - location.longitude - theta0.angle()).normalized() / 360_deg;
 
-    // Höhe beim Durchgang, Formel 12.6 mit H = 0 [rad]
-    const double transitAltitude = asin(sin(latitude) * sin(sun.dec) + cos(latitude) * cos(sun.dec));
+    // Höhe beim Durchgang, Formel 12.6 mit H = 0
+    const Angle transitAltitude = Angle::asin(sin(phi) * sin(sun.dec) + cos(phi) * cos(sun.dec));
 
     RiseTransitSet result = {
         .hasRise = false, .hasSet = false, .hasTransit = true,
@@ -380,17 +341,16 @@ RiseTransitSet calculateSunRiseSet(const double jd, const GeoLocation& location)
     };
 
     // Formel 14.1; außerhalb [−1, 1] Polartag oder Polarnacht
-    const double cosH0 = (sin(h0) - sin(latitude) * sin(sun.dec)) / (cos(latitude) * cos(sun.dec));
+    const double cosH0 = (sin(h0) - sin(phi) * sin(sun.dec)) / (cos(phi) * cos(sun.dec));
     if (cosH0 < -1 || cosH0 > 1) {
         return result;
     }
-    // Stundenwinkel H0 [°]
-    const double H0 = acos(cosH0) * RAD2DEG;
+    const Angle H0 = Angle::acos(cosH0);
 
     // Formel 14.2, Aufgang m1 und Untergang m2 in Tagesbruchteilen
     result.hasRise = result.hasSet = true;
-    result.rise = fmod(m0 - H0 / 360.0 + 1.0, 1.0) * 24.0;
-    result.set  = fmod(m0 + H0 / 360.0 + 1.0, 1.0) * 24.0;
+    result.rise = fmod(m0 - H0 / 360_deg + 1.0, 1.0) * 24.0;
+    result.set  = fmod(m0 + H0 / 360_deg + 1.0, 1.0) * 24.0;
     return result;
 }
 
@@ -429,13 +389,13 @@ double calculateEquinoxSolstice(const int year, const EquinoxType type) {
     const double Y = (year - 2000) / 1000.0;
     const double JDE0 = horner(Y, c[0], c[1], c[2], c[3], c[4]);
 
-    const double T = calculateJulianCenturies(JDE0);
-    const double W = (35999.373 * T - 2.47) * DEG2RAD;
+    const double T = JulianDay(JDE0).centuries();
+    const Angle W = Angle::fromDeg(35999.373 * T - 2.47);
     const double deltaLambda = 1 + 0.0334 * cos(W) + 0.0007 * cos(2 * W);
 
     double S = 0;
     for (const auto& term : periodic) {
-        S += term[0] * cos((term[1] + term[2] * T) * DEG2RAD);
+        S += term[0] * cos(Angle::fromDeg(term[1] + term[2] * T));
     }
 
     return JDE0 + 0.00001 * S / deltaLambda;
@@ -462,7 +422,7 @@ static double earthApsisForK(const double k, const ApsisType type) {
 
     double correction = 0;
     for (int i = 0; i < 5; i++) {
-        correction += coefficient[i] * sin((angles[i][0] + angles[i][1] * k) * DEG2RAD);
+        correction += coefficient[i] * sin(Angle::fromDeg(angles[i][0] + angles[i][1] * k));
     }
 
     return horner(k, 2451547.507, 365.2596358, 0.0000000158) + correction;
@@ -470,21 +430,21 @@ static double earthApsisForK(const double k, const ApsisType type) {
 
 /**
  * Erstes Perihel bzw. Aphel der Erde nach jd (Kapitel 37). Der mittlere Fehler beträgt drei Stunden.
- * @param jd Julianischer Tag [JD]
+ * @param jd Julianischer Tag
  * @param type Perihel (Periapsis) oder Aphel (Apoapsis)
  * @return Zeitpunkt [JDE] und Entfernung Erde–Sonne nach Formel 24.5 [km]
  */
-Apsis calculateNextEarthApsis(const double jd, const ApsisType type) {
+Apsis calculateNextEarthApsis(const JulianDay jd, const ApsisType type) {
     // k ≈ 0.99997·(Jahr − 2000.01), ganzzahlig für das Perihel, + 0.5 für das Aphel
-    const double year = 2000.0 + (jd - 2451545.0) / 365.25;
+    const double year = 2000.0 + (jd.value() - 2451545.0) / 365.25;
     double k = floor(0.99997 * (year - 2000.01)) - 1;
     if (type == ApsisType::Apoapsis) k += 0.5;
     double jde = earthApsisForK(k, type);
-    while (jde <= jd) {
+    while (jde <= jd.value()) {
         k += 1;
         jde = earthApsisForK(k, type);
     }
-    return { .jde = jde, .distance = calculateSunPosition(jde).distance };
+    return { .jde = jde, .distance = calculateSunPosition(JulianDay(jde)).distance };
 }
 
 // ---------------------------------------------------------------
@@ -493,21 +453,21 @@ Apsis calculateNextEarthApsis(const double jd, const ApsisType type) {
 
 // Fundamentalargumente des Mondes
 struct MoonArguments {
-    double Lp;      // Mittlere Länge des Mondes L′ [rad], Formel 45.1
-    double D;       // Mittlere Elongation des Mondes D [rad], Formel 45.2
-    double M;       // Mittlere Anomalie der Sonne M [rad], Formel 45.3
-    double Mp;      // Mittlere Anomalie des Mondes M′ [rad], Formel 45.4
-    double F;       // Argument der Breite des Mondes F [rad], Formel 45.5
+    Angle Lp;       // Mittlere Länge des Mondes L′, Formel 45.1
+    Angle D;        // Mittlere Elongation des Mondes D, Formel 45.2
+    Angle M;        // Mittlere Anomalie der Sonne M, Formel 45.3
+    Angle Mp;       // Mittlere Anomalie des Mondes M′, Formel 45.4
+    Angle F;        // Argument der Breite des Mondes F, Formel 45.5
     double E;       // Faktor für die abnehmende Exzentrizität der Erdbahn [1], Formel 45.6
 };
 
 static inline MoonArguments moonArguments(const double T) {
     return {
-        .Lp = normalizeDegrees(horner(T, 218.3164591, 481267.88134236, -0.0013268, 1.0 / 538841.0, -1.0 / 65194000.0)) * DEG2RAD,
-        .D  = normalizeDegrees(horner(T, 297.8502042, 445267.1115168, -0.0016300, 1.0 / 545868.0, -1.0 / 113065000.0)) * DEG2RAD,
-        .M  = normalizeDegrees(horner(T, 357.5291092, 35999.0502909, -0.0001536, 1.0 / 24490000.0)) * DEG2RAD,
-        .Mp = normalizeDegrees(horner(T, 134.9634114, 477198.8676313, 0.0089970, 1.0 / 69699.0, -1.0 / 14712000.0)) * DEG2RAD,
-        .F  = normalizeDegrees(horner(T, 93.2720993, 483202.0175273, -0.0034029, -1.0 / 3526000.0, 1.0 / 863310000.0)) * DEG2RAD,
+        .Lp = Angle::fromDeg(horner(T, 218.3164591, 481267.88134236, -0.0013268, 1.0 / 538841.0, -1.0 / 65194000.0)).normalized(),
+        .D  = Angle::fromDeg(horner(T, 297.8502042, 445267.1115168, -0.0016300, 1.0 / 545868.0, -1.0 / 113065000.0)).normalized(),
+        .M  = Angle::fromDeg(horner(T, 357.5291092, 35999.0502909, -0.0001536, 1.0 / 24490000.0)).normalized(),
+        .Mp = Angle::fromDeg(horner(T, 134.9634114, 477198.8676313, 0.0089970, 1.0 / 69699.0, -1.0 / 14712000.0)).normalized(),
+        .F  = Angle::fromDeg(horner(T, 93.2720993, 483202.0175273, -0.0034029, -1.0 / 3526000.0, 1.0 / 863310000.0)).normalized(),
         .E  = horner(T, 1.0, -0.002516, -0.0000074),
     };
 }
@@ -665,22 +625,22 @@ static inline double eccentricityFactor(const int multipleOfM, const double E) {
 
 /**
  * Geozentrische Position des Mondes, bezogen auf das mittlere Äquinoktium des Datums (Kapitel 45).
- * @param jd Julianischer Tag [JD]
- * @return Länge λ und Breite β [rad], Entfernung Δ [km]
+ * @param jd Julianischer Tag
+ * @return Länge λ, Breite β und Entfernung Δ [km]
  */
-Ecliptic calculateMoonPosition(const double jd) {
-    const double T = calculateJulianCenturies(jd);
+Ecliptic calculateMoonPosition(const JulianDay jd) {
+    const double T = jd.centuries();
     const MoonArguments a = moonArguments(T);
 
-    // Zusätzliche Argumente A1 (Venus), A2 (Jupiter), A3 [rad]
-    const double A1 = normalizeDegrees(horner(T, 119.75, 131.849)) * DEG2RAD;
-    const double A2 = normalizeDegrees(horner(T, 53.09, 479264.290)) * DEG2RAD;
-    const double A3 = normalizeDegrees(horner(T, 313.45, 481266.484)) * DEG2RAD;
+    // Zusätzliche Argumente A1 (Venus), A2 (Jupiter), A3
+    const Angle A1 = Angle::fromDeg(horner(T, 119.75, 131.849)).normalized();
+    const Angle A2 = Angle::fromDeg(horner(T, 53.09, 479264.290)).normalized();
+    const Angle A3 = Angle::fromDeg(horner(T, 313.45, 481266.484)).normalized();
 
     // Σl [0.000001°] und Σr [0.001 km], Tabelle 45.1
     double suml = 0, sumr = 0;
     for (const MoonTermLR& t : MOON_TERMS_LR) {
-        const double arg = t.D * a.D + t.M * a.M + t.Mp * a.Mp + t.F * a.F;
+        const Angle arg = t.D * a.D + t.M * a.M + t.Mp * a.Mp + t.F * a.F;
         const double e = eccentricityFactor(t.M, a.E);
         suml += t.l * e * sin(arg);
         sumr += t.r * e * cos(arg);
@@ -692,7 +652,7 @@ Ecliptic calculateMoonPosition(const double jd) {
     // Σb [0.000001°], Tabelle 45.2
     double sumb = 0;
     for (const MoonTermB& t : MOON_TERMS_B) {
-        const double arg = t.D * a.D + t.M * a.M + t.Mp * a.Mp + t.F * a.F;
+        const Angle arg = t.D * a.D + t.M * a.M + t.Mp * a.Mp + t.F * a.F;
         sumb += t.b * eccentricityFactor(t.M, a.E) * sin(arg);
     }
     sumb += -2235 * sin(a.Lp)
@@ -703,20 +663,20 @@ Ecliptic calculateMoonPosition(const double jd) {
           -   115 * sin(a.Lp + a.Mp);
 
     return {
-        .longitude = a.Lp + (suml / 1000000.0) * DEG2RAD,
-        .latitude  = (sumb / 1000000.0) * DEG2RAD,
+        .longitude = a.Lp + Angle::fromDeg(suml / 1000000.0),
+        .latitude  = Angle::fromDeg(sumb / 1000000.0),
         .distance  = 385000.56 + sumr / 1000.0,
     };
 }
 
 /**
  * Länge des mittleren aufsteigenden Knotens der Mondbahn, Formel 45.7.
- * @param jd Julianischer Tag [JD]
- * @return Ω [rad]
+ * @param jd Julianischer Tag
+ * @return Ω
  */
-double calculateMoonAscendingNode(const double jd) {
-    const double T = calculateJulianCenturies(jd);
-    return normalizeDegrees(horner(T, 125.0445550, -1934.1361849, 0.0020762, 1.0 / 467410.0, -1.0 / 60616000.0)) * DEG2RAD;
+Angle calculateMoonAscendingNode(const JulianDay jd) {
+    const double T = jd.centuries();
+    return Angle::fromDeg(horner(T, 125.0445550, -1934.1361849, 0.0020762, 1.0 / 467410.0, -1.0 / 60616000.0)).normalized();
 }
 
 // ---------------------------------------------------------------
@@ -725,9 +685,9 @@ double calculateMoonAscendingNode(const double jd) {
 
 /**
  * Beleuchteter Teil der Mondscheibe, Formeln 46.1 bis 46.3.
- * @param sunEqu Rektaszension und Deklination der Sonne [rad]
+ * @param sunEqu Rektaszension und Deklination der Sonne
  * @param sunDistance Entfernung Erde–Sonne R [km]
- * @param moonEqu Rektaszension und Deklination des Mondes [rad]
+ * @param moonEqu Rektaszension und Deklination des Mondes
  * @param moonDistance Entfernung Erde–Mond Δ [km]
  * @return Beleuchteter Teil k [0..1], 0 = Neumond, 1 = Vollmond
  */
@@ -736,9 +696,10 @@ double calculateMoonIlluminatedFraction(const Equatorial& sunEqu, const double s
     // Geozentrische Elongation ψ, Formel 46.2
     const double cosPsi = sin(sunEqu.dec) * sin(moonEqu.dec)
                         + cos(sunEqu.dec) * cos(moonEqu.dec) * cos(sunEqu.ra - moonEqu.ra);
+    const Angle psi = Angle::acos(cosPsi);
 
-    // Phasenwinkel i [rad], Formel 46.3
-    const double i = atan2(sunDistance * sin(acos(cosPsi)), moonDistance - sunDistance * cosPsi);
+    // Phasenwinkel i, Formel 46.3
+    const Angle i = Angle::atan2(sunDistance * sin(psi), moonDistance - sunDistance * cosPsi);
 
     // Formel 46.1
     return (1 + cos(i)) / 2.0;
@@ -750,91 +711,91 @@ double calculateMoonIlluminatedFraction(const Equatorial& sunEqu, const double s
 
 /**
  * Optische und physische Libration sowie Positionswinkel der Mondachse (Kapitel 51, ohne Nutation).
- * @param jd Julianischer Tag [JD]
+ * @param jd Julianischer Tag
  * @param moon Geozentrische Position des Mondes aus calculateMoonPosition
- * @return Libration l (−π, π] und b [rad], Positionswinkel P [rad]
+ * @return Libration l (−π, π] und b, Positionswinkel P
  */
-MoonOrientation calculateMoonOrientation(const double jd, const Ecliptic& moon) {
-    const double T = calculateJulianCenturies(jd);
+MoonOrientation calculateMoonOrientation(const JulianDay jd, const Ecliptic& moon) {
+    const double T = jd.centuries();
     const MoonArguments a = moonArguments(T);
-    const double Omega = calculateMoonAscendingNode(jd);
+    const Angle Omega = calculateMoonAscendingNode(jd);
 
-    // Neigung des mittleren Mondäquators gegen die Ekliptik I = 1°32′32″.7 [rad]
-    constexpr double I = 1.54242 * DEG2RAD;
-    const double lambda = moon.longitude;
-    const double beta = moon.latitude;
+    // Neigung des mittleren Mondäquators gegen die Ekliptik I = 1°32′32″.7
+    constexpr Angle I = 1.54242_deg;
+    const Angle lambda = moon.longitude;
+    const Angle beta = moon.latitude;
 
     // Optische Libration l′, b′, Formel 51.1
-    const double W = lambda - Omega;
-    const double A = atan2(sin(W) * cos(beta) * cos(I) - sin(beta) * sin(I), cos(W) * cos(beta));
-    const double l1 = A - a.F;
-    const double b1 = asin(-sin(W) * cos(beta) * sin(I) - sin(beta) * cos(I));
+    const Angle W = lambda - Omega;
+    const Angle A = Angle::atan2(sin(W) * cos(beta) * cos(I) - sin(beta) * sin(I), cos(W) * cos(beta));
+    const Angle l1 = A - a.F;
+    const Angle b1 = Angle::asin(-sin(W) * cos(beta) * sin(I) - sin(beta) * cos(I));
 
-    // Physische Libration: ρ, σ, τ [°] → [rad]
-    const double K1 = horner(T, 119.75, 131.849) * DEG2RAD;
-    const double K2 = horner(T, 72.56, 20.186) * DEG2RAD;
-    const double D = a.D, M = a.M, Mp = a.Mp, F = a.F;
+    // Physische Libration: ρ, σ, τ (Koeffizienten in Grad)
+    const Angle K1 = Angle::fromDeg(horner(T, 119.75, 131.849));
+    const Angle K2 = Angle::fromDeg(horner(T, 72.56, 20.186));
+    const Angle D = a.D, M = a.M, Mp = a.Mp, F = a.F;
 
-    const double rho = (-0.02752 * cos(Mp)
-                       - 0.02245 * sin(F)
-                       + 0.00684 * cos(Mp - 2 * F)
-                       - 0.00293 * cos(2 * F)
-                       - 0.00085 * cos(2 * F - 2 * D)
-                       - 0.00054 * cos(Mp - 2 * D)
-                       - 0.00020 * sin(Mp + F)
-                       - 0.00020 * cos(Mp + 2 * F)
-                       - 0.00020 * cos(Mp - F)
-                       + 0.00014 * cos(Mp + 2 * F - 2 * D)) * DEG2RAD;
+    const Angle rho = Angle::fromDeg(-0.02752 * cos(Mp)
+                                     - 0.02245 * sin(F)
+                                     + 0.00684 * cos(Mp - 2 * F)
+                                     - 0.00293 * cos(2 * F)
+                                     - 0.00085 * cos(2 * F - 2 * D)
+                                     - 0.00054 * cos(Mp - 2 * D)
+                                     - 0.00020 * sin(Mp + F)
+                                     - 0.00020 * cos(Mp + 2 * F)
+                                     - 0.00020 * cos(Mp - F)
+                                     + 0.00014 * cos(Mp + 2 * F - 2 * D));
 
-    const double sigma = (-0.02816 * sin(Mp)
-                         + 0.02244 * cos(F)
-                         - 0.00682 * sin(Mp - 2 * F)
-                         - 0.00279 * sin(2 * F)
-                         - 0.00083 * sin(2 * F - 2 * D)
-                         + 0.00069 * sin(Mp - 2 * D)
-                         + 0.00040 * cos(Mp + F)
-                         - 0.00025 * sin(2 * Mp)
-                         - 0.00023 * sin(Mp + 2 * F)
-                         + 0.00020 * cos(Mp - F)
-                         + 0.00019 * sin(Mp - F)
-                         + 0.00013 * sin(Mp + 2 * F - 2 * D)
-                         - 0.00010 * cos(Mp - 3 * F)) * DEG2RAD;
+    const Angle sigma = Angle::fromDeg(-0.02816 * sin(Mp)
+                                       + 0.02244 * cos(F)
+                                       - 0.00682 * sin(Mp - 2 * F)
+                                       - 0.00279 * sin(2 * F)
+                                       - 0.00083 * sin(2 * F - 2 * D)
+                                       + 0.00069 * sin(Mp - 2 * D)
+                                       + 0.00040 * cos(Mp + F)
+                                       - 0.00025 * sin(2 * Mp)
+                                       - 0.00023 * sin(Mp + 2 * F)
+                                       + 0.00020 * cos(Mp - F)
+                                       + 0.00019 * sin(Mp - F)
+                                       + 0.00013 * sin(Mp + 2 * F - 2 * D)
+                                       - 0.00010 * cos(Mp - 3 * F));
 
-    const double tau = (+0.02520 * a.E * sin(M)
-                       + 0.00473 * sin(2 * Mp - 2 * F)
-                       - 0.00467 * sin(Mp)
-                       + 0.00396 * sin(K1)
-                       + 0.00276 * sin(2 * Mp - 2 * D)
-                       + 0.00196 * sin(Omega)
-                       - 0.00183 * cos(Mp - F)
-                       + 0.00115 * sin(Mp - 2 * D)
-                       - 0.00096 * sin(Mp - D)
-                       + 0.00046 * sin(2 * F - 2 * D)
-                       - 0.00039 * sin(Mp - F)
-                       - 0.00032 * sin(Mp - M - D)
-                       + 0.00027 * sin(2 * Mp - M - 2 * D)
-                       + 0.00023 * sin(K2)
-                       - 0.00014 * sin(2 * D)
-                       + 0.00014 * cos(2 * Mp - 2 * F)
-                       - 0.00012 * sin(Mp - 2 * F)
-                       - 0.00012 * sin(2 * Mp)
-                       + 0.00011 * sin(2 * Mp - 2 * M - 2 * D)) * DEG2RAD;
+    const Angle tau = Angle::fromDeg(+0.02520 * a.E * sin(M)
+                                     + 0.00473 * sin(2 * Mp - 2 * F)
+                                     - 0.00467 * sin(Mp)
+                                     + 0.00396 * sin(K1)
+                                     + 0.00276 * sin(2 * Mp - 2 * D)
+                                     + 0.00196 * sin(Omega)
+                                     - 0.00183 * cos(Mp - F)
+                                     + 0.00115 * sin(Mp - 2 * D)
+                                     - 0.00096 * sin(Mp - D)
+                                     + 0.00046 * sin(2 * F - 2 * D)
+                                     - 0.00039 * sin(Mp - F)
+                                     - 0.00032 * sin(Mp - M - D)
+                                     + 0.00027 * sin(2 * Mp - M - 2 * D)
+                                     + 0.00023 * sin(K2)
+                                     - 0.00014 * sin(2 * D)
+                                     + 0.00014 * cos(2 * Mp - 2 * F)
+                                     - 0.00012 * sin(Mp - 2 * F)
+                                     - 0.00012 * sin(2 * Mp)
+                                     + 0.00011 * sin(2 * Mp - 2 * M - 2 * D));
 
     // Physische Libration l″, b″, Formel 51.2
-    const double l2 = -tau + (rho * cos(A) + sigma * sin(A)) * tan(b1);
-    const double b2 = sigma * cos(A) - rho * sin(A);
+    const Angle l2 = -tau + (rho * cos(A) + sigma * sin(A)) * tan(b1);
+    const Angle b2 = sigma * cos(A) - rho * sin(A);
 
     // Positionswinkel der Achse P
-    const double eps = calculateObliquity(jd);
+    const Angle eps = calculateObliquity(jd);
     const Equatorial moonEqu = calculateEquatorial(moon, eps);
-    const double V = Omega + sigma / sin(I);
+    const Angle V = Omega + sigma / sin(I);
     const double X = sin(I + rho) * sin(V);
     const double Y = sin(I + rho) * cos(V) * cos(eps) - cos(I + rho) * sin(eps);
-    const double omega = atan2(X, Y);
-    const double b = b1 + b2;
-    const double P = asin(sqrt(X * X + Y * Y) * cos(moonEqu.ra - omega) / cos(b));
+    const Angle omega = Angle::atan2(X, Y);
+    const Angle b = b1 + b2;
+    const Angle P = Angle::asin(sqrt(X * X + Y * Y) * cos(moonEqu.ra - omega) / cos(b));
 
-    return { .libration = { .longitude = normalizeRadiansSigned(l1 + l2), .latitude = b }, .positionAngle = P };
+    return { .libration = { .longitude = (l1 + l2).normalizedSigned(), .latitude = b }, .positionAngle = P };
 }
 
 // ---------------------------------------------------------------
@@ -905,10 +866,10 @@ static const ApsisTerm APOGEE_PARALLAX[] = {
 
 template <size_t N>
 static double sumApsisTerms(const ApsisTerm (&terms)[N], const double T,
-                            const double D, const double M, const double F, const bool useCos) {
+                            const Angle D, const Angle M, const Angle F, const bool useCos) {
     double sum = 0;
     for (const ApsisTerm& t : terms) {
-        const double arg = t.nD * D + t.nM * M + t.nF * F;
+        const Angle arg = t.nD * D + t.nM * M + t.nF * F;
         sum += (t.a0 + t.aT * T) * (useCos ? cos(arg) : sin(arg));
     }
     return sum;
@@ -922,33 +883,33 @@ static Apsis moonApsisForK(const double k, const ApsisType type) {
     // Formel 48.1: Zeit des mittleren Perigäums bzw. Apogäums [JDE]
     const double jdeMean = 2451534.6698 + 27.55454988 * k + T * T * horner(T, -0.0006886, -0.000001098, 0.0000000052);
 
-    // D, M, F [°] → [rad]
-    const double D = (171.9179 + 335.9106046 * k + T * T * horner(T, -0.0100250, -0.00001156, 0.000000055)) * DEG2RAD;
-    const double M = (347.3477 + 27.1577721 * k + T * T * horner(T, -0.0008323, -0.0000010)) * DEG2RAD;
-    const double F = (316.6109 + 364.5287911 * k + T * T * horner(T, -0.0125131, -0.0000148)) * DEG2RAD;
+    // D, M, F (Koeffizienten in Grad)
+    const Angle D = Angle::fromDeg(171.9179 + 335.9106046 * k + T * T * horner(T, -0.0100250, -0.00001156, 0.000000055));
+    const Angle M = Angle::fromDeg(347.3477 + 27.1577721 * k + T * T * horner(T, -0.0008323, -0.0000010));
+    const Angle F = Angle::fromDeg(316.6109 + 364.5287911 * k + T * T * horner(T, -0.0125131, -0.0000148));
 
     const bool perigee = type == ApsisType::Periapsis;
     const double jde = jdeMean + (perigee ? sumApsisTerms(PERIGEE_TIME, T, D, M, F, false)
                                           : sumApsisTerms(APOGEE_TIME, T, D, M, F, false));
-    // Äquatoriale Horizontalparallaxe [″] → [rad]
-    const double parallax = (perigee ? sumApsisTerms(PERIGEE_PARALLAX, T, D, M, F, true)
-                                     : sumApsisTerms(APOGEE_PARALLAX, T, D, M, F, true)) / 3600.0 * DEG2RAD;
+    // Äquatoriale Horizontalparallaxe (Tabelle in Bogensekunden)
+    const Angle parallax = Angle::fromArcsec(perigee ? sumApsisTerms(PERIGEE_PARALLAX, T, D, M, F, true)
+                                                     : sumApsisTerms(APOGEE_PARALLAX, T, D, M, F, true));
     return { .jde = jde, .distance = EARTH_RADIUS / sin(parallax) };
 }
 
 /**
  * Erstes Perigäum bzw. Apogäum des Mondes nach jd (Kapitel 48).
  * Meeus gibt die Genauigkeit des Zeitpunkts mit bis zu 31 min (Perigäum) bzw. 3 min (Apogäum) an.
- * @param jd Julianischer Tag [JD]
+ * @param jd Julianischer Tag
  * @param type Perigäum (Periapsis) oder Apogäum (Apoapsis)
  * @return Zeitpunkt [JDE] und Entfernung [km]
  */
-Apsis calculateNextMoonApsis(const double jd, const ApsisType type) {
+Apsis calculateNextMoonApsis(const JulianDay jd, const ApsisType type) {
     // k zählt die anomalistischen Monate ab dem Perigäum 1999 Dezember 22 (Formel 48.1 nach k umgestellt)
-    double k = floor((jd - 2451534.6698) / 27.55454988) - 1;
+    double k = floor((jd.value() - 2451534.6698) / 27.55454988) - 1;
     if (type == ApsisType::Apoapsis) k += 0.5;
     Apsis apsis = moonApsisForK(k, type);
-    while (apsis.jde <= jd) {
+    while (apsis.jde <= jd.value()) {
         k += 1;
         apsis = moonApsisForK(k, type);
     }
@@ -960,15 +921,15 @@ static double moonNodeForK(const double k) {
     // [Julianische Jahrhunderte]
     const double T = k / 1342.23;
 
-    // D, M, M′, Ω, V, P [°] → [rad]
-    const double D     = (183.6380 + 331.73735691 * k + T * T * horner(T, 0.0015057, 0.00000209, -0.000000010)) * DEG2RAD;
-    const double M     = (17.4006 + 26.82037250 * k + T * T * horner(T, 0.0000999, 0.00000006)) * DEG2RAD;
-    const double Mp    = (38.3776 + 355.52747322 * k + T * T * horner(T, 0.0123577, 0.000014628, -0.000000069)) * DEG2RAD;
-    const double Omega = (123.9767 - 1.44098949 * k + T * T * horner(T, 0.0020625, 0.00000214, -0.000000016)) * DEG2RAD;
-    const double V     = horner(T, 299.75, 132.85, -0.009173) * DEG2RAD;
-    const double P     = Omega + horner(T, 272.75, -2.3) * DEG2RAD;
+    // D, M, M′, Ω, V, P (Koeffizienten in Grad)
+    const Angle D     = Angle::fromDeg(183.6380 + 331.73735691 * k + T * T * horner(T, 0.0015057, 0.00000209, -0.000000010));
+    const Angle M     = Angle::fromDeg(17.4006 + 26.82037250 * k + T * T * horner(T, 0.0000999, 0.00000006));
+    const Angle Mp    = Angle::fromDeg(38.3776 + 355.52747322 * k + T * T * horner(T, 0.0123577, 0.000014628, -0.000000069));
+    const Angle Omega = Angle::fromDeg(123.9767 - 1.44098949 * k + T * T * horner(T, 0.0020625, 0.00000214, -0.000000016));
+    const Angle V     = Angle::fromDeg(horner(T, 299.75, 132.85, -0.009173));
+    const Angle P     = Omega + Angle::fromDeg(horner(T, 272.75, -2.3));
     // Formel 45.6 [1]
-    const double E     = horner(T, 1.0, -0.002516, -0.0000074);
+    const double E    = horner(T, 1.0, -0.002516, -0.0000074);
 
     return 2451565.1619 + 27.212220817 * k + T * T * horner(T, 0.0002572, 0.000000021, -0.000000000088)
          - 0.4721 * sin(Mp)
@@ -997,14 +958,14 @@ static double moonNodeForK(const double k) {
 
 /**
  * Erster Durchgang des Mondes durch einen Knoten seiner Bahn nach jd (Kapitel 49).
- * @param jd Julianischer Tag [JD]
+ * @param jd Julianischer Tag
  * @return Zeitpunkt [JDE] und Art des Knotens
  */
-NodePassage calculateNextMoonNode(const double jd) {
+NodePassage calculateNextMoonNode(const JulianDay jd) {
     // k zählt die drakonitischen Monate ab dem aufsteigenden Knoten 2000 Januar 21
-    double k = floor((jd - 2451565.1619) / 27.212220817) - 1;
+    double k = floor((jd.value() - 2451565.1619) / 27.212220817) - 1;
     double jde = moonNodeForK(k);
-    while (jde <= jd) {
+    while (jde <= jd.value()) {
         k += 0.5;
         jde = moonNodeForK(k);
     }
@@ -1080,23 +1041,29 @@ double parabolaRootInUnitInterval(const Parabola& p) {
 }
 
 // Zustand des Mondes zu einem Zeitpunkt, bezogen auf Horizont und Meridian.
+// Die Parabeln rechnen mit den Werten in Radiant.
 struct MoonSample {
     double altitude;    // Höhe über der Aufgangshöhe h0 [rad] (> 0: sichtbar)
     double hourAngle;   // Stundenwinkel [rad], (−π, π]
 };
 
-MoonSample sampleMoon(const double jd, const GeoLocation& location) {
+MoonSample sampleMoon(const JulianDay jd, const GeoLocation& location) {
     const Ecliptic moon = calculateMoonPosition(jd);
     const Equatorial equ = calculateEquatorial(moon, calculateObliquity(jd));
-    const double siderealTime = calculateLocalSiderealTime(jd, location);
-    const Horizontal azh = calculateHorizontal(equ, siderealTime, location);
+    const SiderealTime theta = calculateLocalSiderealTime(jd, location);
+    const Horizontal hor = calculateHorizontal(equ, theta, location);
 
     // Standardhöhe des Mondes h0 = 0.7275·π − 0°34′ (Kapitel 14) für die geozentrische Position;
     // berücksichtigt Horizontalparallaxe π, Halbmesser und Refraktion.
-    const double parallax = asin(EARTH_RADIUS / moon.distance);
-    const double h0 = 0.7275 * parallax - 0.5667 * DEG2RAD;
+    const Angle parallax = Angle::asin(EARTH_RADIUS / moon.distance);
+    const Angle h0 = 0.7275 * parallax - 0.5667_deg;
 
-    return { .altitude = azh.altitude - h0, .hourAngle = normalizeRadiansSigned(siderealTime - equ.ra) };
+    return { .altitude = (hor.altitude - h0).rad(), .hourAngle = (theta - equ.ra).normalizedSigned().rad() };
+}
+
+// Stetige Fortsetzung eines Stundenwinkels relativ zu einem Bezugswert [rad]
+double continueHourAngle(const double reference, const double hourAngle) {
+    return reference + Angle::fromRad(hourAngle - reference).normalizedSigned().rad();
 }
 
 } // namespace
@@ -1106,12 +1073,12 @@ MoonSample sampleMoon(const double jd, const GeoLocation& location) {
  * Die Mondhöhe wird stündlich berechnet. Für jedes Stundenintervall [k, k+1] wird eine
  * Parabel durch die Stützstellen k, k+1, k+2 gelegt, mit der Horizont- und Meridiandurchgänge
  * sowie der Scheitel innerhalb des Intervalls bestimmt werden.
- * @param jd Julianischer Tag [JD]
+ * @param jd Julianischer Tag
  * @param location Beobachtungsort
- * @return Ereignisse [h UT] und höchste Höhe [rad]
+ * @return Ereignisse [h UT] und höchste Höhe über h0
  */
-RiseTransitSet calculateMoonRiseSet(const double jd, const GeoLocation& location) {
-    const double midnight = round(jd) - 0.5;
+RiseTransitSet calculateMoonRiseSet(const JulianDay jd, const GeoLocation& location) {
+    const JulianDay midnight = jd.midnight();
     auto sampleAt = [&](int hour) {
         return sampleMoon(midnight + hour / 24.0, location);
     };
@@ -1121,7 +1088,7 @@ RiseTransitSet calculateMoonRiseSet(const double jd, const GeoLocation& location
     MoonSample s1 = sampleAt(1);
 
     RiseTransitSet result = {};
-    result.maxAltitude = s0.altitude;
+    double maxAltitude = s0.altitude;   // [rad]
     result.maxAltitudeTime = 0.0;
 
     for (int k = 0; k < 24; k++) {
@@ -1167,22 +1134,22 @@ RiseTransitSet calculateMoonRiseSet(const double jd, const GeoLocation& location
         if (!result.hasTransit && s0.hourAngle < 0.0 && s1.hourAngle >= 0.0
             && fabs(s0.hourAngle) < M_PI / 2 && fabs(s1.hourAngle) < M_PI / 2) {
             // Stundenwinkel relativ zur mittleren Stützstelle stetig fortsetzen
-            const double w0 = s1.hourAngle + normalizeRadiansSigned(s0.hourAngle - s1.hourAngle);
-            const double w2 = s1.hourAngle + normalizeRadiansSigned(s2.hourAngle - s1.hourAngle);
+            const double w0 = continueHourAngle(s1.hourAngle, s0.hourAngle);
+            const double w2 = continueHourAngle(s1.hourAngle, s2.hourAngle);
             result.hasTransit = true;
             result.transit = k + parabolaRootInUnitInterval(parabolaThrough(w0, s1.hourAngle, w2));
         }
 
         // Höchster Stand: Stützstelle k+1 und Parabelscheitel innerhalb des Fensters (und des Tages)
-        if (s1.altitude > result.maxAltitude) {
-            result.maxAltitude = s1.altitude;
+        if (s1.altitude > maxAltitude) {
+            maxAltitude = s1.altitude;
             result.maxAltitudeTime = k + 1;
         }
         if (altitude.A < 0.0) {
             const double u = -altitude.B / (2.0 * altitude.A);
             const double vertex = parabolaValue(altitude, u);
-            if (u > 0.0 && u < 2.0 && k + u <= 24.0 && vertex > result.maxAltitude) {
-                result.maxAltitude = vertex;
+            if (u > 0.0 && u < 2.0 && k + u <= 24.0 && vertex > maxAltitude) {
+                maxAltitude = vertex;
                 result.maxAltitudeTime = k + u;
             }
         }
@@ -1190,6 +1157,7 @@ RiseTransitSet calculateMoonRiseSet(const double jd, const GeoLocation& location
         s0 = s1;
         s1 = s2;
     }
+    result.maxAltitude = Angle::fromRad(maxAltitude);
     return result;
 }
 
@@ -1200,10 +1168,10 @@ RiseTransitSet calculateMoonRiseSet(const double jd, const GeoLocation& location
 /**
  * Rotationsmatrix für eine Drehung um eine Achse (Rodrigues-Formel).
  * @param axle Drehachse (beliebige Länge)
- * @param angle Drehwinkel [rad]
+ * @param angle Drehwinkel
  * @return Rotationsmatrix
  */
-Mat3 createRotationMatrix(const Vec3& axle, const double angle) {
+Mat3 createRotationMatrix(const Vec3& axle, const Angle angle) {
     const double cosA = cos(angle);
     const double sinA = sin(angle);
 

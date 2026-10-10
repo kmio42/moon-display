@@ -8,11 +8,11 @@
 
 // Persistente Konfiguration (RAM-Kopie der NVS-Werte).
 // Defaults werden verwendet, wenn noch nichts im Flash gespeichert wurde.
-// Standort (Länge, Breite [rad], Höhe [m]) und Zeitzone als POSIX-TZ-String; die Zeitzone wird nur
+// Standort (Länge, Breite, Höhe [m]) und Zeitzone als POSIX-TZ-String; die Zeitzone wird nur
 // für die Ausgabe verwendet (System läuft in UTC). Im Flash stehen Länge und Breite in Grad.
 astro::GeoLocation configLocation = {
-    .longitude = 9.0 * astro::DEG2RAD,
-    .latitude  = 51.0 * astro::DEG2RAD,
+    .longitude = astro::Angle::fromDeg(9.0),
+    .latitude  = astro::Angle::fromDeg(51.0),
     .elevation = 0.0,
     .timezone  = "CET-1CEST,M3.5.0,M10.5.0/3",
 };
@@ -29,8 +29,8 @@ static constexpr const char* PREFS_NAMESPACE = "moon-cfg";
 
 void loadConfig() {
     prefs.begin(PREFS_NAMESPACE, true);
-    configLocation.latitude  = prefs.getDouble("lat", configLocation.latitude  * astro::RAD2DEG) * astro::DEG2RAD;
-    configLocation.longitude = prefs.getDouble("lon", configLocation.longitude * astro::RAD2DEG) * astro::DEG2RAD;
+    configLocation.latitude  = astro::Angle::fromDeg(prefs.getDouble("lat", configLocation.latitude.deg()));
+    configLocation.longitude = astro::Angle::fromDeg(prefs.getDouble("lon", configLocation.longitude.deg()));
     configLocation.elevation = prefs.getDouble("elev", configLocation.elevation);
     configDisplayOptions = prefs.getInt   ("opts",  configDisplayOptions);
     configAutoMode       = prefs.getBool  ("auto",  configAutoMode);
@@ -43,8 +43,8 @@ void loadConfig() {
 
 void saveConfig() {
     prefs.begin(PREFS_NAMESPACE, false);
-    prefs.putDouble("lat",   configLocation.latitude  * astro::RAD2DEG);
-    prefs.putDouble("lon",   configLocation.longitude * astro::RAD2DEG);
+    prefs.putDouble("lat",   configLocation.latitude.deg());
+    prefs.putDouble("lon",   configLocation.longitude.deg());
     prefs.putDouble("elev",  configLocation.elevation);
     prefs.putInt   ("opts",  configDisplayOptions);
     prefs.putBool  ("auto",  configAutoMode);

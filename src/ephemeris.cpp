@@ -3,35 +3,25 @@
 #include <algorithm>
 #include <cmath>
 
+using astro::Angle;
+using astro::JulianDay;
+using namespace astro::literals;
+
 // Standort – persistent in Config.ino
 extern astro::GeoLocation configLocation;
 // Umrechnung in Lokalzeit (Config.ino)
 extern void utcToLocal(time_t t, struct tm& out);
 
-double julianDateFromTm(const struct tm& utc) {
-    return astro::calculateJulianDate(
-        utc.tm_year + 1900,
-        utc.tm_mon  + 1,
-        utc.tm_mday,
-        utc.tm_hour + utc.tm_min / 60.0 + utc.tm_sec / 3600.0
-    );
-}
-
-time_t timeFromJulianDate(double jd) {
-    // JD 2440587.5 = 01.01.1970 00:00 UTC
-    return (time_t) llround((jd - 2440587.5) * 86400.0);
-}
-
 SkyState computeSky(const struct tm& utc) {
     SkyState s;
-    s.jd = julianDateFromTm(utc);
+    s.jd = JulianDay::fromTm(utc);
 
-    // Lokale Sternzeit in Radiant (GMST + Längengrad-Offset)
-    s.gmstHours    = astro::calculateGreenwichSiderealTime(s.jd);
+    // Sternzeit in Greenwich und am Standort
+    s.gmst         = astro::calculateGreenwichSiderealTime(s.jd);
     s.siderealTime = astro::calculateLocalSiderealTime(s.jd, configLocation);
 
     // ── Sonnenposition ───────────────────────────────────────────────────────
-    const double eps = astro::calculateObliquity(s.jd);
+    const Angle eps = astro::calculateObliquity(s.jd);
     s.sun      = astro::calculateSunPosition(s.jd);
     s.sunRaDek = astro::calculateEquatorial(s.sun, eps);
     s.sunAzH   = astro::calculateHorizontal(s.sunRaDek, s.siderealTime, configLocation);
@@ -39,8 +29,8 @@ SkyState computeSky(const struct tm& utc) {
     // ── Mondposition ─────────────────────────────────────────────────────────
     s.moon = astro::calculateMoonPosition(s.jd);
     s.moonRaDek = astro::calculateEquatorial(s.moon, eps);
-    // Äquatoriale Horizontalparallaxe [rad], Kapitel 45
-    const double moonParallax = asin(astro::EARTH_RADIUS / s.moon.distance);
+    // Äquatoriale Horizontalparallaxe, Kapitel 45
+    const Angle moonParallax = Angle::asin(astro::EARTH_RADIUS / s.moon.distance);
     s.moonRaDek = astro::calculateTopocentric(s.moonRaDek, moonParallax, s.siderealTime, configLocation);
     s.moonAzH   = astro::calculateHorizontal(s.moonRaDek, s.siderealTime, configLocation);
 
@@ -50,13 +40,13 @@ SkyState computeSky(const struct tm& utc) {
     // ── Mondphase und parallaktischer Winkel ──────────────────────────────────
     s.phase  = astro::calculateMoonIlluminatedFraction(s.sunRaDek, s.sun.distance, s.moonRaDek, s.moon.distance);
     // Zunehmend, solange der Mond der Sonne in ekliptikaler Länge um weniger als 180° vorausläuft
-    s.waxing = fmod(s.moon.longitude - s.sun.longitude + 4 * M_PI, 2 * M_PI) < M_PI;
+    s.waxing = (s.moon.longitude - s.sun.longitude).normalized() < 180_deg;
 
     // Positionswinkel (Mitte) des beleuchteten Mondrandes
     // Formel 46.5 aus "Astronomische Algorithmen, 2. Auflage" von Jean Meeus.
-    s.chi = atan2(cos(s.sunRaDek.dec) * sin(s.sunRaDek.ra - s.moonRaDek.ra),
-                  sin(s.sunRaDek.dec) * cos(s.moonRaDek.dec)
-                - cos(s.sunRaDek.dec) * sin(s.moonRaDek.dec) * cos(s.sunRaDek.ra - s.moonRaDek.ra));
+    s.chi = Angle::atan2(cos(s.sunRaDek.dec) * sin(s.sunRaDek.ra - s.moonRaDek.ra),
+                         sin(s.sunRaDek.dec) * cos(s.moonRaDek.dec)
+                       - cos(s.sunRaDek.dec) * sin(s.moonRaDek.dec) * cos(s.sunRaDek.ra - s.moonRaDek.ra));
 
     // Parallaktischer Winkel für Mond (ortsabhängig)
     s.q = astro::calculateParallacticAngle(s.moonRaDek, s.siderealTime, configLocation);
@@ -70,9 +60,9 @@ int localDayKey(const struct tm& t) {
 }
 
 // Übernimmt ein Ereignis (UT-Stunden ab UT-Mitternacht jd0), wenn es lokal auf den Tag localDay fällt.
-static void takeEvent(double jd0, double utHours, int localDay, bool& found, time_t& out) {
+static void takeEvent(JulianDay jd0, double utHours, int localDay, bool& found, time_t& out) {
     if (found) return;
-    time_t t = timeFromJulianDate(jd0) + (time_t) llround(utHours * 3600.0);
+    time_t t = jd0.toUnixTime() + (time_t) llround(utHours * 3600.0);
     struct tm lt;
     utcToLocal(t, lt);
     if (localDayKey(lt) == localDay) {
@@ -81,9 +71,9 @@ static void takeEvent(double jd0, double utHours, int localDay, bool& found, tim
     }
 }
 
-// Julianisches Datum der UT-Mitternacht des UT-Tags, der t enthält.
-static double utMidnight(time_t t) {
-    return floor(t / 86400.0) + 2440587.5;
+// Julianischer Tag der UT-Mitternacht des UT-Tags, der t enthält.
+static JulianDay utMidnight(time_t t) {
+    return JulianDay::fromUnixTime(t).midnight();
 }
 
 // Ermittelt die Ereignisse des lokalen Kalendertags, der den Zeitpunkt t enthält.
@@ -98,11 +88,11 @@ DayEvents eventsForLocalDay(time_t t, bool withMoon) {
 
     // UT-Mitternacht des ersten und letzten beteiligten UT-Tags.
     // ±1 h Puffer, da dayStart an Tagen mit Sommerzeitumstellung um eine Stunde abweichen kann.
-    const double jdFirst = utMidnight(dayStart - 3600);
-    const double jdLast  = utMidnight(dayStart + 86400 + 3600);
+    const JulianDay jdFirst = utMidnight(dayStart - 3600);
+    const JulianDay jdLast  = utMidnight(dayStart + 86400 + 3600);
 
     DayEvents e = {};
-    for (double jd0 = jdFirst; jd0 <= jdLast + 0.1; jd0 += 1.0) {
+    for (JulianDay jd0 = jdFirst; jd0 <= jdLast + 0.1; jd0 = jd0 + 1.0) {
         const astro::RiseTransitSet sun = astro::calculateSunRiseSet(jd0 + 0.5, configLocation);
         if (sun.hasRise || sun.hasSet) e.sunValid = true;
         if (sun.hasRise) takeEvent(jd0, sun.rise, localDay, e.hasSunrise, e.sunrise);
@@ -119,15 +109,15 @@ DayEvents eventsForLocalDay(time_t t, bool withMoon) {
 
 // ── Ausblick ─────────────────────────────────────────────────────────────────
 
-constexpr double MOON_MAX_DECLINATION = (23.44 + 5.15) * astro::DEG2RAD; // Große Mondwende
-constexpr double LUNAR_ECLIPSE_LIMIT  = 0.95 * astro::DEG2RAD;  // |β| beim Vollmond: Kernschatten
-constexpr double SOLAR_ECLIPSE_LIMIT  = 1.45 * astro::DEG2RAD;  // |β| beim Neumond: partiell oder mehr
+constexpr Angle MOON_MAX_DECLINATION = Angle::fromDeg(23.44 + 5.15); // Große Mondwende
+constexpr Angle LUNAR_ECLIPSE_LIMIT  = 0.95_deg;  // |β| beim Vollmond: Kernschatten
+constexpr Angle SOLAR_ECLIPSE_LIMIT  = 1.45_deg;  // |β| beim Neumond: partiell oder mehr
 constexpr double SUPER_MOON_DISTANCE  = 360000.0;  // km
 constexpr double MINI_MOON_DISTANCE   = 405000.0;  // km
 constexpr double OUTLOOK_DAYS         = 14.0;
 
 // Kulminationshöhe (geozentrisch) des Mondes am lokalen Kalendertag, der t enthält.
-static double culminationHeight(time_t t) {
+static Angle culminationHeight(time_t t) {
 
     struct tm lt;
     utcToLocal(t, lt);
@@ -137,30 +127,29 @@ static double culminationHeight(time_t t) {
     // Meridiandurchgang des lokalen Tags; ohne Durchgang (ca. 1x im Monat) Mittag
     bool found = false;
     time_t transit = dayStart + 12 * 3600;
-    const double jdFirst = utMidnight(dayStart - 3600);
-    const double jdLast  = utMidnight(dayStart + 86400 + 3600);
-    for (double jd0 = jdFirst; jd0 <= jdLast + 0.1; jd0 += 1.0) {
+    const JulianDay jdFirst = utMidnight(dayStart - 3600);
+    const JulianDay jdLast  = utMidnight(dayStart + 86400 + 3600);
+    for (JulianDay jd0 = jdFirst; jd0 <= jdLast + 0.1; jd0 = jd0 + 1.0) {
         const astro::RiseTransitSet moon = astro::calculateMoonRiseSet(jd0 + 0.5, configLocation);
         if (moon.hasTransit) takeEvent(jd0, moon.transit, localDay, found, transit);
     }
 
-    const double jdTransit = transit / 86400.0 + 2440587.5;
+    const JulianDay jdTransit = JulianDay::fromUnixTime(transit);
     const astro::Ecliptic moon = astro::calculateMoonPosition(jdTransit);
-    const double dec = astro::calculateEquatorial(moon, astro::calculateObliquity(jdTransit)).dec;
-    return M_PI / 2 - fabs(configLocation.latitude - dec);
+    const Angle dec = astro::calculateEquatorial(moon, astro::calculateObliquity(jdTransit)).dec;
+    return 90_deg - (configLocation.latitude - dec).abs();
 }
 
-// Elongation des Mondes (ekliptikale Länge Mond − Sonne), -π..π
-static double elongation(double jd) {
-    const double e = astro::calculateMoonPosition(jd).longitude - astro::calculateSunPosition(jd).longitude;
-    return atan2(sin(e), cos(e));
+// Elongation des Mondes (ekliptikale Länge Mond − Sonne), −180°..180°
+static Angle elongation(JulianDay jd) {
+    return (astro::calculateMoonPosition(jd).longitude - astro::calculateSunPosition(jd).longitude).normalizedSigned();
 }
 
-// Sucht den ersten Zeitpunkt in [jdStart, jdEnd], an dem die Elongation target (0 oder π) erreicht.
-static bool findElongation(double jdStart, double jdEnd, double target, double& jdOut) {
+// Sucht den ersten Zeitpunkt in [jdStart, jdEnd] [JD], an dem die Elongation target (0° oder 180°) erreicht.
+static bool findElongation(double jdStart, double jdEnd, Angle target, double& jdOut) {
+    // Abweichung von target [rad], −π..π
     auto diff = [&](double jd) {
-        const double d = elongation(jd) - target;
-        return atan2(sin(d), cos(d));
+        return (elongation(JulianDay(jd)) - target).normalizedSigned().rad();
     };
     double a = jdStart;
     double da = diff(a);
@@ -182,16 +171,16 @@ static bool findElongation(double jdStart, double jdEnd, double target, double& 
 
 MoonOutlook moonOutlookFor(time_t t) {
     MoonOutlook o = {};
-    const double lat = configLocation.latitude;
+    const Angle lat = configLocation.latitude;
 
     // Höhenbereich am Standort bei maximaler Monddeklination
-    const double hA = M_PI / 2 - fabs(lat - MOON_MAX_DECLINATION);
-    const double hB = M_PI / 2 - fabs(lat + MOON_MAX_DECLINATION);
-    const double hMin = std::min(hA, hB);
-    const double hMax = fabs(lat) < MOON_MAX_DECLINATION ? M_PI / 2 : std::max(hA, hB);
+    const Angle hA = 90_deg - (lat - MOON_MAX_DECLINATION).abs();
+    const Angle hB = 90_deg - (lat + MOON_MAX_DECLINATION).abs();
+    const Angle hMin = std::min(hA, hB);
+    const Angle hMax = lat.abs() < MOON_MAX_DECLINATION ? 90_deg : std::max(hA, hB);
 
-    const double today    = culminationHeight(t);
-    const double tomorrow = culminationHeight(t + 86400);
+    const Angle today    = culminationHeight(t);
+    const Angle tomorrow = culminationHeight(t + 86400);
     // Die Deklination verläuft etwa sinusförmig, der Mond verweilt also lange nahe den Extremen.
     // asin() macht daraus eine zeitlich gleichmäßige Skala u (-1..1); die äußeren Stufen sind
     // schmal, damit ▁ und ▇ nur an den Tagen um das Extrem erscheinen (je ~10 % bei großer Mondwende).
@@ -207,23 +196,23 @@ MoonOutlook moonOutlookFor(time_t t) {
     const double jdEnd   = jdStart + OUTLOOK_DAYS;
 
     double jd;
-    if (findElongation(jdStart, jdEnd, M_PI, jd)) {
+    if (findElongation(jdStart, jdEnd, 180_deg, jd)) {
         o.hasFullMoon = true;
-        o.fullMoon = timeFromJulianDate(jd);
-        const astro::Ecliptic moon = astro::calculateMoonPosition(jd);
-        o.lunarEclipse = fabs(moon.latitude) < LUNAR_ECLIPSE_LIMIT;
+        o.fullMoon = JulianDay(jd).toUnixTime();
+        const astro::Ecliptic moon = astro::calculateMoonPosition(JulianDay(jd));
+        o.lunarEclipse = moon.latitude.abs() < LUNAR_ECLIPSE_LIMIT;
         o.superMoon = moon.distance < SUPER_MOON_DISTANCE;
         o.miniMoon  = moon.distance > MINI_MOON_DISTANCE;
         if (o.lunarEclipse) {
             struct tm utc;
             gmtime_r(&o.fullMoon, &utc);
-            o.lunarEclipseVisible = computeSky(utc).moonAzH.altitude > 0;
+            o.lunarEclipseVisible = computeSky(utc).moonAzH.altitude > Angle();
         }
     }
-    if (findElongation(jdStart, jdEnd, 0.0, jd)) {
+    if (findElongation(jdStart, jdEnd, 0_deg, jd)) {
         o.hasNewMoon = true;
-        o.newMoon = timeFromJulianDate(jd);
-        o.solarEclipse = fabs(astro::calculateMoonPosition(jd).latitude) < SOLAR_ECLIPSE_LIMIT;
+        o.newMoon = JulianDay(jd).toUnixTime();
+        o.solarEclipse = astro::calculateMoonPosition(JulianDay(jd)).latitude.abs() < SOLAR_ECLIPSE_LIMIT;
     }
     return o;
 }

@@ -62,9 +62,9 @@ void prepareMoonRender(float phaseParam, float rotation, float mask, int options
   rotMat = rotMatrix;
 
   if((options & OPTION_USE_LIBRATION) && !(options & OPTION_USE_NASA_MODEL)) {
-    const astro::Mat3 libLongitudeRotCorr = astro::createRotationMatrix({0,-1,0},-2.24*astro::DEG2RAD);
-    const astro::Mat3 libLatitudeRotCorr = astro::createRotationMatrix({1,0,0},5.78*astro::DEG2RAD);
-    const astro::Mat3 axleRotCorr = astro::createRotationMatrix({0,0,1},9*astro::DEG2RAD);
+    const astro::Mat3 libLongitudeRotCorr = astro::createRotationMatrix({0,-1,0}, astro::Angle::fromDeg(-2.24));
+    const astro::Mat3 libLatitudeRotCorr = astro::createRotationMatrix({1,0,0}, astro::Angle::fromDeg(5.78));
+    const astro::Mat3 axleRotCorr = astro::createRotationMatrix({0,0,1}, astro::Angle::fromDeg(9));
 
     rotMat = axleRotCorr * libLatitudeRotCorr * libLongitudeRotCorr * rotMatrix;
 #ifdef ARDUINO
@@ -77,20 +77,20 @@ void prepareMoonRender(float phaseParam, float rotation, float mask, int options
 
 // Parallaktischer Winkel q und Positionswinkel P der Mondachse, wie sie laut Optionen
 // in die Darstellung eingehen (0, wenn ignoriert).
-static void orientationAngles(const SkyState& sky, int options, double& q, double& p) {
-  q = (options & OPTION_IGNORE_PARALLACTIC) ? 0.0 : sky.q;
-  p = (options & OPTION_IGNORE_POSITION_ANGLE) ? 0.0 : sky.moonAxle.positionAngle;
+static void orientationAngles(const SkyState& sky, int options, astro::Angle& q, astro::Angle& p) {
+  q = (options & OPTION_IGNORE_PARALLACTIC) ? astro::Angle() : sky.q;
+  p = (options & OPTION_IGNORE_POSITION_ANGLE) ? astro::Angle() : sky.moonAxle.positionAngle;
 }
 
 void moonRenderAngles(const SkyState& sky, int options, double& rotation, double& mask) {
-  double q, p;
+  astro::Angle q, p;
   orientationAngles(sky, options, q, p);
 
   // Zenitwinkel des hellen Mondrandes: chi - q. Ohne Positionswinkel wird das ganze Bild
   // um P zurückgedreht (Mondnordpol oben), der helle Rand also mit.
-  mask = (sky.chi - (sky.moonAxle.positionAngle - p) - q + M_PI/2);
+  mask = (sky.chi - (sky.moonAxle.positionAngle - p) - q + astro::Angle::fromDeg(90)).rad();
 
-  rotation = (p - q + 0.004919 - 0.116413461); //ermittelte Korrektur mit Stellarium
+  rotation = (p - q).rad() + 0.004919 - 0.116413461; //ermittelte Korrektur mit Stellarium
 }
 
 void prepareMoonRenderAt(const struct tm& utc) {
@@ -104,7 +104,7 @@ void prepareMoonRenderAt(const struct tm& utc, int options) {
   int opts = options;
   if (opts < 0) {
     opts = configDisplayOptions & ~OPTION_BLUISH_TINT;
-    if ((configDisplayOptions & OPTION_BLUISH_TINT) && sky.moonAzH.altitude < 0) {
+    if ((configDisplayOptions & OPTION_BLUISH_TINT) && sky.moonAzH.altitude < astro::Angle()) {
       opts |= OPTION_BLUISH_TINT;
     }
   }
@@ -112,7 +112,7 @@ void prepareMoonRenderAt(const struct tm& utc, int options) {
   double rot, mask;
   moonRenderAngles(sky, opts, rot, mask);
 
-  double q, p;
+  astro::Angle q, p;
   orientationAngles(sky, opts, q, p);
   const astro::Mat3 libLongitudeRot = astro::createRotationMatrix({0, -1, 0}, -sky.moonAxle.libration.longitude);
   const astro::Mat3 libLatitudeRot = astro::createRotationMatrix({1, 0, 0}, -sky.moonAxle.libration.latitude);

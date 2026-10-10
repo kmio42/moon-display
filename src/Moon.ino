@@ -43,15 +43,15 @@ void calculateMoon(const struct tm& time, bool printInfo, Adafruit_GC9A01A* tft 
         SkyState sky = computeSky(time);
         double rot, mask;
         moonRenderAngles(sky, configDisplayOptions, rot, mask);
-        Serial.printf("  Julianisches Datum:       %f\n", sky.jd);
-        Serial.printf("  Mondposition RA/Dek:      %6.2f° / %6.2f°\n", sky.moonRaDek.ra * astro::RAD2DEG, sky.moonRaDek.dec * astro::RAD2DEG);
-        Serial.printf("  Mondposition Azimut/Höhe: %6.2f° / %6.2f°\n", sky.moonAzH.azimuth * astro::RAD2DEG, sky.moonAzH.altitude * astro::RAD2DEG);
-        Serial.printf("  Mondlibration:            %6.2f° / %6.2f°\n", sky.moonAxle.libration.longitude * astro::RAD2DEG, sky.moonAxle.libration.latitude * astro::RAD2DEG);
-        Serial.printf("  Mondachse:                %6.2f°\n", sky.moonAxle.positionAngle * astro::RAD2DEG);
+        Serial.printf("  Julianisches Datum:       %f\n", sky.jd.value());
+        Serial.printf("  Mondposition RA/Dek:      %6.2f° / %6.2f°\n", sky.moonRaDek.ra.deg(), sky.moonRaDek.dec.deg());
+        Serial.printf("  Mondposition Azimut/Höhe: %6.2f° / %6.2f°\n", sky.moonAzH.azimuth.deg(), sky.moonAzH.altitude.deg());
+        Serial.printf("  Mondlibration:            %6.2f° / %6.2f°\n", sky.moonAxle.libration.longitude.deg(), sky.moonAxle.libration.latitude.deg());
+        Serial.printf("  Mondachse:                %6.2f°\n", sky.moonAxle.positionAngle.deg());
         Serial.printf("  Mondphase (0-1):          %6.4f\n", sky.phase);
-        Serial.printf("  Mondrand:                 %6.2f°\n", sky.chi * astro::RAD2DEG);
-        Serial.printf("  Parallaktischer Winkel:   %6.2f°\n", sky.q * astro::RAD2DEG);
-        Serial.printf("  Sternzeit:                %6.2f°\n", sky.gmstHours);
+        Serial.printf("  Mondrand:                 %6.2f°\n", sky.chi.deg());
+        Serial.printf("  Parallaktischer Winkel:   %6.2f°\n", sky.q.deg());
+        Serial.printf("  Sternzeit:                %6.4f h\n", sky.gmst.hours());
         Serial.printf(" rot:                      %f\n", rot);
         Serial.printf(" mask:                     %f\n", mask);
     }
@@ -74,7 +74,7 @@ void berechneSonnenaufgang() {
         Serial.println("Keine gültige NTP-Zeit für Sonnenberechnung.");
         return;
     }
-    double jd = astro::calculateJulianDate(
+    const astro::JulianDay jd = astro::JulianDay::fromCalendar(
         zeitInfo.tm_year + 1900,
         zeitInfo.tm_mon  + 1,
         zeitInfo.tm_mday,

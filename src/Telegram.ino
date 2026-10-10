@@ -101,14 +101,14 @@ static String formatLocalDate(time_t t) {
     return buf;
 }
 
-static String formatDeg(double rad) {
+static String formatDeg(astro::Angle angle) {
     char buf[16];
-    snprintf(buf, sizeof(buf), "%+.2f°", rad * astro::RAD2DEG);
+    snprintf(buf, sizeof(buf), "%+.2f°", angle.deg());
     return buf;
 }
 
-static String formatRa(double rad) {
-    double h = fmod(rad * astro::RAD2DEG / 15.0 + 24.0, 24.0);
+static String formatRa(astro::Angle angle) {
+    double h = angle.normalized().hours();
     int hh = (int) h;
     int mm = (int) ((h - hh) * 60.0);
     int ss = (int) (((h - hh) * 60.0 - mm) * 60.0);
@@ -117,17 +117,16 @@ static String formatRa(double rad) {
     return buf;
 }
 
-static String formatAzimut(double rad) {
+static String formatAzimut(astro::Angle angle) {
     char buf[16];
-    snprintf(buf, sizeof(buf), "%.1f°", fmod(rad * astro::RAD2DEG + 360.0, 360.0));
+    snprintf(buf, sizeof(buf), "%.1f°", angle.normalized().deg());
     return buf;
 }
 
 // Formatiert einen Winkel klassisch als ±DDD°MM', gerundet auf ganze Bogenminuten.
 // full360: Winkel wird auf 0–360° normiert (Länge, Azimut).
-static String formatDm(double rad, bool sign, bool full360 = false) {
-    double deg = rad * astro::RAD2DEG;
-    if (full360) deg = fmod(fmod(deg, 360.0) + 360.0, 360.0);
+static String formatDm(astro::Angle angle, bool sign, bool full360 = false) {
+    const double deg = full360 ? angle.normalized().deg() : angle.deg();
     long minutes = lround(fabs(deg) * 60.0);
     if (full360) minutes %= 360 * 60;  // 359°59.6' wird zu 0°00'
     char buf[20];
@@ -140,8 +139,8 @@ static String formatDm(double rad, bool sign, bool full360 = false) {
 }
 
 // Formatiert eine Rektaszension als HHhMMm, gerundet auf ganze Zeitminuten.
-static String formatHm(double rad) {
-    const double h = fmod(fmod(rad * astro::RAD2DEG / 15.0, 24.0) + 24.0, 24.0);
+static String formatHm(astro::Angle angle) {
+    const double h = angle.normalized().hours();
     const long minutes = lround(h * 60.0) % (24 * 60);
     char buf[12];
     snprintf(buf, sizeof(buf), "%02ldh%02ldm", minutes / 60, minutes % 60);
@@ -149,8 +148,8 @@ static String formatHm(double rad) {
 }
 
 // Formatiert einen kleinen Winkel (Monddurchmesser) als MM'SS".
-static String formatArcmin(double rad) {
-    const long seconds = lround(rad * astro::RAD2DEG * 3600.0);
+static String formatArcmin(astro::Angle angle) {
+    const long seconds = lround(angle.arcsec());
     char buf[16];
     snprintf(buf, sizeof(buf), "%ld'%02ld\"", seconds / 60, seconds % 60);
     return buf;
@@ -252,14 +251,15 @@ constexpr double MOON_PERIGEE_MIN = 356400.0;  // km
 constexpr double MOON_APOGEE_MAX  = 406700.0;  // km
 constexpr int    BLOCK_LABEL_WIDTH = 10;       // Zeichen
 
-static double moonDiameter(double distance) {
-    return 2.0 * asin(astro::MOON_RADIUS / distance);
+// Scheinbarer Durchmesser des Mondes bei der Entfernung distance [km]
+static astro::Angle moonDiameter(double distance) {
+    return 2.0 * astro::Angle::asin(astro::MOON_RADIUS / distance);
 }
 
 // Lage des Durchmessers zwischen Apogäum (0 %) und Perigäum (100 %) der Extremwerte
 static double diameterPercent(double distance) {
-    const double dMin = moonDiameter(MOON_APOGEE_MAX);
-    const double dMax = moonDiameter(MOON_PERIGEE_MIN);
+    const astro::Angle dMin = moonDiameter(MOON_APOGEE_MAX);
+    const astro::Angle dMax = moonDiameter(MOON_PERIGEE_MIN);
     return constrain((moonDiameter(distance) - dMin) / (dMax - dMin) * 100.0, 0.0, 100.0);
 }
 
@@ -299,7 +299,7 @@ static String buildMoonMessage() {
     msg += blockLine("Durchm.", formatArcmin(moonDiameter(sky.moon.distance)) + buf);
 
     // Elongation, Formel 46.2 aus "Astronomische Algorithmen" von Jean Meeus (Breite der Sonne = 0)
-    const double elongation = acos(cos(sky.moon.latitude) * cos(sky.moon.longitude - sky.sun.longitude));
+    const astro::Angle elongation = astro::Angle::acos(cos(sky.moon.latitude) * cos(sky.moon.longitude - sky.sun.longitude));
     msg += blockLine("Elong.", formatDm(elongation, false) + (sky.waxing ? " Ost" : " West"));
 
     snprintf(buf, sizeof(buf), "%s, %.1f %%", sky.waxing ? "zunehmend" : "abnehmend", sky.phase * 100.0);
@@ -338,11 +338,11 @@ static String buildMoonMessage() {
     const astro::Apsis perigee = astro::calculateNextMoonApsis(sky.jd, astro::ApsisType::Periapsis);
     const astro::Apsis apogee  = astro::calculateNextMoonApsis(sky.jd, astro::ApsisType::Apoapsis);
     snprintf(buf, sizeof(buf), " (%.0f %%)", diameterPercent(perigee.distance));
-    msg += blockLine("Perigäum", formatLocalDateTime(timeFromJulianDate(perigee.jde)) + buf);
+    msg += blockLine("Perigäum", formatLocalDateTime(astro::JulianDay(perigee.jde).toUnixTime()) + buf);
     snprintf(buf, sizeof(buf), " (%.0f %%)", diameterPercent(apogee.distance));
-    msg += blockLine("Apogäum", formatLocalDateTime(timeFromJulianDate(apogee.jde)) + buf);
+    msg += blockLine("Apogäum", formatLocalDateTime(astro::JulianDay(apogee.jde).toUnixTime()) + buf);
     const astro::NodePassage node = astro::calculateNextMoonNode(sky.jd);
-    msg += blockLine("Knoten", formatLocalDateTime(timeFromJulianDate(node.jde)) + (node.ascending ? " aufst." : " abst."));
+    msg += blockLine("Knoten", formatLocalDateTime(astro::JulianDay(node.jde).toUnixTime()) + (node.ascending ? " aufst." : " abst."));
     msg.remove(msg.length() - 1);  // letzter Zeilenumbruch, sonst Leerzeile im Block
     return msg + "</pre>";
 }
@@ -362,7 +362,7 @@ static String buildConfigMessage() {
     char buf[96];
     String msg = "⚙️ Konfiguration\n\n";
     snprintf(buf, sizeof(buf), "Standort: %.6f / %.6f, %.0f m\n",
-             configLocation.latitude * astro::RAD2DEG, configLocation.longitude * astro::RAD2DEG,
+             configLocation.latitude.deg(), configLocation.longitude.deg(),
              configLocation.elevation);
     msg += buf;
     snprintf(buf, sizeof(buf), "Optionen: %d\n", configDisplayOptions);
@@ -755,8 +755,8 @@ static String handleCommand(String text, const String& chatId) {
             || elev < -500.0 || elev > 9000.0) {
             return "Ungültige Werte. Erwartet: /standort <lat> <lon> [höhe]\nLat: -90..90, Lon: -180..180, Höhe: -500..9000 m";
         }
-        configLocation.latitude  = lat * astro::DEG2RAD;
-        configLocation.longitude = lon * astro::DEG2RAD;
+        configLocation.latitude  = astro::Angle::fromDeg(lat);
+        configLocation.longitude = astro::Angle::fromDeg(lon);
         configLocation.elevation = elev;
         saveConfig();
         requestRedraw();

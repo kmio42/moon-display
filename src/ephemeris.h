@@ -5,11 +5,11 @@
 #include "astro.h"
 
 // Momentaufnahme von Sonne und Mond für den konfigurierten Standort.
-// Winkel in Radiant, Mond topozentrisch (parallaxenkorrigiert).
+// Mond topozentrisch (parallaxenkorrigiert).
 struct SkyState {
-    double jd;
-    double gmstHours;               // Greenwich-Sternzeit in Stunden
-    double siderealTime;            // Lokale Sternzeit in Radiant
+    astro::JulianDay jd;
+    astro::SiderealTime gmst;       // Greenwich-Sternzeit
+    astro::SiderealTime siderealTime;  // Lokale Sternzeit
     astro::Equatorial sunRaDek;
     astro::Horizontal sunAzH;
     astro::Ecliptic sun;            // Geozentrisch, Distanz in km
@@ -19,8 +19,8 @@ struct SkyState {
     astro::MoonOrientation moonAxle;
     double phase;                   // Beleuchteter Anteil 0..1
     bool waxing;                    // Zunehmend
-    double chi;                     // Positionswinkel des hellen Mondrandes
-    double q;                       // Parallaktischer Winkel des Mondes
+    astro::Angle chi;               // Positionswinkel des hellen Mondrandes
+    astro::Angle q;                 // Parallaktischer Winkel des Mondes
 };
 
 // Auf- und Untergänge eines lokalen Kalendertags als UTC-Zeitpunkte.
@@ -43,8 +43,6 @@ struct MoonOutlook {
     bool superMoon, miniMoon;
 };
 
-double julianDateFromTm(const struct tm& utc);
-time_t timeFromJulianDate(double jd);
 SkyState computeSky(const struct tm& utc);
 int localDayKey(const struct tm& t);
 DayEvents eventsForLocalDay(time_t t, bool withMoon);

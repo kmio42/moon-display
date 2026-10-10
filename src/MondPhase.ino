@@ -219,8 +219,8 @@ void cmd_set_location_(SerialCommands* sender)
         sender->GetSerial()->println("Ungültige Werte. Lat: -90..90, Lon: -180..180, Höhe: -500..9000 m");
         return;
     }
-    configLocation.latitude  = lat * astro::DEG2RAD;
-    configLocation.longitude = lon * astro::DEG2RAD;
+    configLocation.latitude  = astro::Angle::fromDeg(lat);
+    configLocation.longitude = astro::Angle::fromDeg(lon);
     configLocation.elevation = elev;
     saveConfig();
     requestRedraw();
@@ -298,8 +298,8 @@ SerialCommand cmd_set_timezone("set_timezone", cmd_set_timezone_);
 void cmd_config_(SerialCommands* sender)
 {
     sender->GetSerial()->println("Aktuelle Konfiguration:");
-    sender->GetSerial()->printf("  Latitude:  %.6f\n", configLocation.latitude * astro::RAD2DEG);
-    sender->GetSerial()->printf("  Longitude: %.6f\n", configLocation.longitude * astro::RAD2DEG);
+    sender->GetSerial()->printf("  Latitude:  %.6f\n", configLocation.latitude.deg());
+    sender->GetSerial()->printf("  Longitude: %.6f\n", configLocation.longitude.deg());
     sender->GetSerial()->printf("  Höhe:      %.0f m\n", configLocation.elevation);
     sender->GetSerial()->printf("  Options:   %d (0x%X)\n", configDisplayOptions, configDisplayOptions);
     sender->GetSerial()->printf("    [%c] darken_unlit    (1)\n",   (configDisplayOptions & 1) ? 'x' : ' ');
