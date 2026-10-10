@@ -135,6 +135,7 @@ public:
     friend constexpr bool operator>(const Angle a, const Angle b) { return a.rad_ > b.rad_; }
     friend constexpr bool operator<=(const Angle a, const Angle b) { return a.rad_ <= b.rad_; }
     friend constexpr bool operator>=(const Angle a, const Angle b) { return a.rad_ >= b.rad_; }
+    friend constexpr bool operator==(const Angle a, const Angle b) { return a.rad_ == b.rad_; }
 
 private:
     constexpr explicit Angle(const double rad) : rad_(rad) {}

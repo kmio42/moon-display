@@ -76,6 +76,34 @@ static JulianDay utMidnight(time_t t) {
     return JulianDay::fromUnixTime(t).midnight();
 }
 
+constexpr int MOON_CACHE_DAYS = 6;
+
+// Mondauf-/-untergang des UT-Tags ab jd0 (UT-Mitternacht). Die letzten Tage werden zwischengespeichert,
+// da Uhr und Tagesbericht dieselben UT-Tage mehrfach brauchen (je Tag ca. 0,2 s auf dem ESP32-C3).
+// Nach einer Standortänderung passen die alten Einträge nicht mehr und werden nach und nach ersetzt.
+static astro::RiseTransitSet moonRiseSetForUtDay(JulianDay jd0) {
+    struct Entry {
+        double jd0;         // UT-Mitternacht [JD], 0 = leer
+        Angle latitude, longitude;
+        double elevation;   // [m]
+        astro::RiseTransitSet events;
+    };
+    static Entry cache[MOON_CACHE_DAYS];
+    static int next = 0;
+
+    for (const Entry& e : cache) {
+        if (e.jd0 == jd0.value() && e.latitude == configLocation.latitude
+            && e.longitude == configLocation.longitude && e.elevation == configLocation.elevation) {
+            return e.events;
+        }
+    }
+    Entry& e = cache[next];
+    next = (next + 1) % MOON_CACHE_DAYS;
+    e = { jd0.value(), configLocation.latitude, configLocation.longitude, configLocation.elevation,
+          astro::calculateMoonRiseSet(jd0 + 0.5, configLocation) };
+    return e.events;
+}
+
 // Ermittelt die Ereignisse des lokalen Kalendertags, der den Zeitpunkt t enthält.
 // Gerechnet wird in UT: Ein lokaler Tag überdeckt bis zu zwei UT-Tage, deren Ereignisse
 // nach Umrechnung in Lokalzeit gefiltert werden.
@@ -98,7 +126,7 @@ DayEvents eventsForLocalDay(time_t t, bool withMoon) {
         if (sun.hasRise) takeEvent(jd0, sun.rise, localDay, e.hasSunrise, e.sunrise);
         if (sun.hasSet)  takeEvent(jd0, sun.set,  localDay, e.hasSunset,  e.sunset);
         if (withMoon) {
-            const astro::RiseTransitSet moon = astro::calculateMoonRiseSet(jd0 + 0.5, configLocation);
+            const astro::RiseTransitSet moon = moonRiseSetForUtDay(jd0);
             if (moon.hasRise)    takeEvent(jd0, moon.rise,    localDay, e.hasMoonrise,    e.moonrise);
             if (moon.hasSet)     takeEvent(jd0, moon.set,     localDay, e.hasMoonset,     e.moonset);
             if (moon.hasTransit) takeEvent(jd0, moon.transit, localDay, e.hasMoonTransit, e.moonTransit);
@@ -130,7 +158,7 @@ static Angle culminationHeight(time_t t) {
     const JulianDay jdFirst = utMidnight(dayStart - 3600);
     const JulianDay jdLast  = utMidnight(dayStart + 86400 + 3600);
     for (JulianDay jd0 = jdFirst; jd0 <= jdLast + 0.1; jd0 = jd0 + 1.0) {
-        const astro::RiseTransitSet moon = astro::calculateMoonRiseSet(jd0 + 0.5, configLocation);
+        const astro::RiseTransitSet moon = moonRiseSetForUtDay(jd0);
         if (moon.hasTransit) takeEvent(jd0, moon.transit, localDay, found, transit);
     }
 
