@@ -1,7 +1,7 @@
 # Architektur
 
 Dieses Dokument beschreibt, wie die Firmware des Mond-Displays aufgebaut ist. Wie man das Gerät
-bedient und konfiguriert, steht in der [readme.md](readme.md).
+bedient und konfiguriert, steht in der [readme.md](readme.md) (deutsch: [readme.de.md](readme.de.md)).
 
 ## Überblick
 
@@ -11,9 +11,14 @@ Benachrichtigungswege (Telegram, Pushover). **Alle astronomischen Berechnungen l
 
 ```
                     ┌────────────────────────────── MondPhase.ino ──────────────────────────────┐
-                    │  setup(), loop(), Serielle Befehle, Moduswechsel, WLAN                    │
+                    │  setup(), loop(), serielle Zeilen lesen, Moduswechsel, WLAN               │
                     └───────┬───────────────────┬──────────────────────┬────────────────────────┘
                             │                   │                      │
+                            │         ┌─────────▼──────────┐           │
+                            │         │ Befehle            │           │
+                            │         │ Commands.ino       │──────────►│
+                            │         │ Messages.ino, i18n │           │
+                            │         └─────────┬──────────┘           │
               ┌─────────────▼───┐     ┌─────────▼──────────┐    ┌──────▼───────────────┐
               │ Anzeige         │     │ Benachrichtigung   │    │ Konfiguration        │
               │ Moon.ino        │     │ Telegram.ino       │    │ Config.ino (NVS)     │
@@ -42,7 +47,10 @@ Die Schichten sind strikt geordnet: Eine Schicht kennt nur die unter ihr liegend
 
 | Datei | Aufgabe |
 |---|---|
-| [MondPhase.ino](src/MondPhase.ino) | Einstiegspunkt: `setup()`, `loop()`, WLAN-Verbindung, NTP, serielle Befehle, Moduswechsel |
+| [MondPhase.ino](src/MondPhase.ino) | Einstiegspunkt: `setup()`, `loop()`, WLAN-Verbindung, NTP, serielle Zeilen lesen, Moduswechsel |
+| [Commands.ino](src/Commands.ino) | Befehlstabelle für die serielle Schnittstelle und Telegram ([commands.h](src/commands.h)) |
+| [Messages.ino](src/Messages.ino) | Tagesbericht, Mond- und Sonnenkoordinaten als Text, Formatierung ([messages.h](src/messages.h)) |
+| [i18n.cpp](src/i18n.cpp) | Übersetzte Texte: Text-IDs in [i18n_ids.h](src/i18n_ids.h), eine Datei pro Sprache in [lang/](src/lang/) |
 | [Config.ino](src/Config.ino) | Persistente Einstellungen in NVS, Umrechnung UTC → Lokalzeit, Prüfung von Zeitzone und `HH:MM` |
 | [Moon.ino](src/Moon.ino) | Mondanzeige: bereitet das Rendern vor und schreibt das Bild zeilenweise aufs Display; Debug-Ausgabe |
 | [clock_face.cpp](src/clock_face.cpp) | 24h-Uhr: Zeichnen von Ring, Segment, Zeigern und Mondsymbol |
@@ -51,7 +59,7 @@ Die Schichten sind strikt geordnet: Eine Schicht kennt nur die unter ihr liegend
 | [png_stream.cpp](src/png_stream.cpp) | PNG-Schreiber, der das Bild Stück für Stück erzeugt |
 | [ephemeris.cpp](src/ephemeris.cpp) | Sonne, Mond, Auf-/Untergänge und Ausblick für einen Standort und Zeitpunkt |
 | [astro.cpp](src/astro.cpp) | Astronomische Formeln nach Jean Meeus, Datentypen für Winkel, Sternzeit und Julianischen Tag |
-| [Telegram.ino](src/Telegram.ino) | Bot, Tagesbericht, Mondbild, Profil- und Gruppenbild |
+| [Telegram.ino](src/Telegram.ino) | Bot (Polling, Zugriffsregeln), Tagesbericht, Mond- und Uhrenbild, Profil- und Gruppenbild |
 | [Pushover.ino](src/Pushover.ino) | Nachrichten über die Pushover-API |
 | [display_mode.h](src/display_mode.h) | Konstanten der Anzeigemodi |
 | [credentials.h](src/credentials.h.template) | WLAN-Daten und Zugangsdaten der Dienste (nicht im Repository) |
@@ -84,8 +92,8 @@ Gemessene Dauer auf dem Gerät (ESP32-C3 ohne FPU, 160 MHz):
 | Profil- und Gruppenbild rendern und hochladen | ca. 6 s |
 | Uhr, nur Stundenzeiger (jede Minute) | ca. 20 ms |
 
-`setup()` lädt die Konfiguration, startet WLAN und NTP (`configTime`), initialisiert das Display und
-die seriellen Befehle und ruft `setupTelegram()` auf. Solange NTP nicht synchronisiert hat, liegt
+`setup()` lädt die Konfiguration, startet WLAN und NTP (`configTime`), initialisiert das Display
+und ruft `setupTelegram()` auf. Solange NTP nicht synchronisiert hat, liegt
 die Systemzeit vor 2023. Alle Teile prüfen das (`MIN_VALID_TIME`) und warten.
 
 ## Zeitkonventionen
@@ -203,6 +211,13 @@ sie rund und symmetrisch sind. Ob ein Pixel im Segment liegt, ergibt sich ohne W
 Vorzeichen von Kreuz- und Skalarprodukt mit den Grenzstrahlen. Dicke Linien setzen sich aus zwei Dreiecken zusammen, weil
 Adafruit_GFX keine dicken Linien kennt. Senkrechte und waagerechte Linien sind Rechtecke.
 
+**Bild für Telegram (`/clock`):** `clockImageBegin()` zeichnet Ring, Segment, Zeiger und Ziffern wie beim
+kompletten Neuzeichnen, aber in eine eigene Zeichenfläche mit 4 Bit je Pixel (die Uhr hat weniger als
+16 Farben, 28,8 KB statt 115 KB für RGB565). Das Mondsymbol wird erst beim Abholen der Pixel in
+`clockImagePixel()` berechnet, wie in `moon_render` ohne Bildpuffer. Das funktioniert, weil sich das
+Mondsymbol mit keinem anderen Element überschneidet. Der Zeichenzustand des Displays bleibt
+unberührt, das Bild entsteht also auch im Mond-Modus.
+
 ## Telegram und Pushover
 
 [Telegram.ino](src/Telegram.ino) pollt alle 3 Sekunden ohne Long-Polling, damit die Anzeige weiterläuft.
@@ -249,6 +264,50 @@ gibt sie danach wieder frei, damit der Speicher für TLS nicht dauerhaft belegt 
 Telegram und Pushover sind optional und unabhängig. Fehlen die Zugangsdaten in `credentials.h`, ist der
 jeweilige Teil abgeschaltet. Pushover braucht kein Telegram.
 
+## Befehle
+
+[Commands.ino](src/Commands.ino) enthält **eine** Tabelle `COMMANDS` für beide Kanäle. Jeder Eintrag hat
+einen englischen Namen, eine Syntax (`usage`), eine übersetzte Beschreibung (`Txt`), die Kanäle
+(`CH_SERIAL`, `CH_TELEGRAM`) und einen Handler. Aus der Tabelle entstehen die Hilfe (`help`) und das
+Befehlsmenü von Telegram (`buildBotCommandsJson()` für `setMyCommands`).
+
+- **Seriell:** `readSerialCommands()` in [MondPhase.ino](src/MondPhase.ino) sammelt Zeichen bis zum
+  Zeilenende (höchstens 99) und ruft `runCommand(CH_SERIAL, …)` auf. HTML-Antworten (`moon`) werden ohne
+  `<pre>`-Tags ausgegeben.
+- **Telegram:** `handleCommand()` in [Telegram.ino](src/Telegram.ino) entfernt `@BotName`, ignoriert
+  Befehle an andere Bots und ruft `runCommand(CH_TELEGRAM, …)` auf. Die Zugriffsregeln (siehe unten)
+  prüft `handleTelegram()` vorher.
+- `runCommand()` nimmt den Namen mit oder ohne `/`, ignoriert Groß-/Kleinschreibung und lehnt Befehle
+  ab, die es im Kanal nicht gibt. Ein Handler bekommt den Rest der Zeile als `args` und gibt eine
+  `Reply` zurück; ist der Text leer, hat er schon selbst geantwortet (Bilder).
+- **Einstellungsbefehle** (`location`, `options`, `mode`, `daily`, `timezone`, `language`, seriell
+  `time`, `wifi`) zeigen ohne Argument den Wert und die Syntax, mit Argument setzen sie ihn, rufen
+  `saveConfig()` und gegebenenfalls `requestRedraw()` oder `resetAutoReportDay()` auf und zeigen danach
+  den neuen Wert. Einen eigenen `config`-Befehl gibt es nicht.
+
+## Sprachen
+
+Alle Ausgaben an Nutzer (Antworten, Hilfe, Tagesbericht, Bildunterschriften) laufen über
+`tr(Txt::…)` aus [i18n.h](src/i18n.h); Log-Ausgaben auf der seriellen Schnittstelle bleiben deutsch.
+
+- [i18n_ids.h](src/i18n_ids.h) listet alle Text-IDs (X-Macro `TEXT_IDS`). Endet eine ID auf `Fmt`, ist
+  der Text ein printf-Format; Formate mit `textf()` aus [messages.h](src/messages.h) füllen. Endet sie auf
+  `Pattern`, ist er ein `strftime`-Format.
+- Jede Sprache steht in [lang/](src/lang/) als Liste von Paaren `{Txt::…, "…"}` in beliebiger
+  Reihenfolge. In [i18n.cpp](src/i18n.cpp) wird sie mit einer Zeile in `LANGUAGES` registriert; `language()`
+  sortiert die Texte zur Compilezeit in ein Array, `tr()` ist ein Arrayzugriff. Die Texte liegen im Flash.
+- **Englisch** ist die Referenz und muss jede ID enthalten. In anderen Sprachen fehlende IDs erscheinen
+  englisch, so lässt sich eine Sprache schrittweise übersetzen.
+- `static_assert` prüft beim Bauen: fehlende IDs in Englisch, doppelte IDs und bei `…Fmt` gleiche
+  Platzhalter (Typ und Reihenfolge) wie im Englischen, weil `snprintf` von newlib keine
+  Positionsargumente kennt. Die Meldung nennt Sprache und ID, z. B.
+  `static assertion failed: de: Platzhalter weichen von en ab: DailyFmt`. Dafür nutzt der Code
+  `static_assert` mit erzeugter Meldung (C++26, ab GCC 14).
+- Monatsnamen über `%b` gibt newlib nur englisch aus; andere Sprachen nehmen Ziffern.
+- Die Mondphase liefert `ephemeris` als `MoonPhase`; den Namen liefert `moonPhaseName()` aus i18n. So
+  bleiben `astro` und `ephemeris` ohne Text.
+- Nach einem Wechsel mit `language` setzt Telegram das Befehlsmenü mit den neuen Beschreibungen neu.
+
 ## Konfiguration
 
 Alle Einstellungen liegen als RAM-Kopie in globalen Variablen in [Config.ino](src/Config.ino) und werden
@@ -264,6 +323,7 @@ und rufen `saveConfig()`.
 | `auto`, `atime` | Tagesbericht ein/aus, Uhrzeit in Minuten nach Mitternacht |
 | `tz` | POSIX-Zeitzone |
 | `mode` | Anzeigemodus (Mond oder Uhr) |
+| `lang` | Sprache als Code (`de`, `en`); im RAM als Index `configLanguage` der registrierten Sprachen |
 
 Zugangsdaten (WLAN, Telegram, Pushover) stehen **nicht** im NVS, sondern fest im Programm über
 `credentials.h`. Diese Datei ist in der `.gitignore`; als Vorlage dient `credentials.h.template`.
@@ -278,6 +338,7 @@ Zugangsdaten (WLAN, Telegram, Pushover) stehen **nicht** im NVS, sondern fest im
 - Die Texturen liegen im Flash (`PROGMEM`). Die Partitionstabelle `huge_app.csv` schafft Platz dafür.
 - Das Profil-JPEG belegt kurzzeitig 48 KB Heap, das JPEG-Encoder-Objekt etwa 3 KB (auf dem Heap, nicht
   auf dem Stack).
+- Das Uhrenbild für `/clock` belegt während des Uploads 28,8 KB Heap.
 - Telegram nutzt einen dauerhaften `WiFiClientSecure`, Pushover legt pro Nachricht einen eigenen an.
 
 ## Vorschau auf dem PC
@@ -296,10 +357,16 @@ nur `utcToLocal()`, `telegramConnectionLost()` und die Konfigurationsvariablen a
 ## Erweitern
 
 - **Neue Darstellungsoption:** Bit in [moon_render.h](src/moon_render.h) ergänzen, in `moonPixel()` oder
-  `prepareMoonRender()` auswerten, dann Anzeige in `config` (seriell, [MondPhase.ino](src/MondPhase.ino))
-  und `/config` ([Telegram.ino](src/Telegram.ino)) sowie die Optionstabelle in der readme.md nachziehen.
-- **Neuer Telegram-Befehl:** in `handleCommand()` ergänzen, außerdem in `HELP_TEXT` und `BOT_COMMANDS`.
+  `prepareMoonRender()` auswerten, dann in `optionsStatus()` ([Commands.ino](src/Commands.ino)) mit
+  einem Text `Opt…` und in den Optionstabellen der readmes nachziehen.
+- **Neuer Befehl:** Handler und Eintrag in `COMMANDS` ([Commands.ino](src/Commands.ino)), Beschreibung als
+  `Cmd…` in [i18n_ids.h](src/i18n_ids.h) und den Sprachdateien; Hilfe und Telegram-Menü folgen
+  automatisch. Befehlstabelle in beiden readmes ergänzen.
+- **Neuer Text:** ID in [i18n_ids.h](src/i18n_ids.h), Text in [lang/en.h](src/lang/en.h), weitere
+  Sprachen optional.
+- **Neue Sprache:** [lang/en.h](src/lang/en.h) nach `lang/<code>.h` kopieren, `LANG_EN` umbenennen und
+  übersetzen, in [i18n.cpp](src/i18n.cpp) einbinden und eine Zeile in `LANGUAGES` ergänzen.
 - **Neuer Anzeigemodus:** Konstante in [display_mode.h](src/display_mode.h), Zeichenfunktion in `loop()`
-  einhängen, `requestRedraw()` und `displayModeName()` anpassen.
+  einhängen, `requestRedraw()` anpassen und den Befehl `mode` ([Commands.ino](src/Commands.ino)) erweitern.
 - **Neuer Benachrichtigungskanal:** wie Pushover als eigene Datei mit `send…()` und `…Enabled()` anlegen
   und in `checkAutoReport()` mit eigenem Tag-Zähler einhängen.

@@ -1,4 +1,6 @@
 # Moon Display
+*English | [Deutsch](readme.de.md)*
+
 The Moon Display is a compact desk device built around an ESP32-C3 and a round IPS display that shows the current view of the Moon in real time: not just the phase, but the actual appearance as seen from the observer's location at this very moment. Various display options are available, including texture choice, dimming of the unilluminated side, and whether libration is taken into account.
 An internet connection is only needed as a time source — all astronomical calculations are performed on the device itself.
 
@@ -18,7 +20,8 @@ An internet connection is only needed as a time source — all astronomical calc
 * Telegram bot for changing settings, querying current sun/moon coordinates and an optional daily report
 * Daily report can additionally (or exclusively) be sent as a push notification via the [Pushover](https://pushover.net) app
 * The Telegram bot's profile photo shows the current moon and is updated daily
-* Serial interface (115200 baud) for settings and debug output: Julian date, RA/Dec, azimuth/altitude, libration, phase, parallactic angle, sidereal time, rotation, mask, sunrise/sunset times
+* Messages in German or English, switchable at runtime; further languages can be added as a single file
+* The same commands via Telegram and the serial interface (115200 baud), plus debug output on the serial interface: Julian date, RA/Dec, azimuth/altitude, libration, phase, parallactic angle, sidereal time, rotation, mask, sunrise/sunset times
 
 ## Configuration
 
@@ -55,25 +58,10 @@ The bot only answers messages from this chat ID. Leave the token empty to disabl
 ```
 In the group the bot only reacts to commands sent by the user `TELEGRAM_CHAT_ID`; messages from other members, ordinary messages and commands addressed to other bots (`/cmd@OtherBot`) are ignored. Answers go to the chat where the command was sent. Telegram shows a service message in the group each time the photo changes, i.e. once a day.
 
-| Command | Description |
-|---|---|
-| `/mond` | Current moon coordinates in degrees and arcminutes: ecliptic longitude/latitude, RA/Dec, azimuth (counted from south)/altitude; apparent diameter with its position between minimum and maximum, elongation, phase, libration, today's moonrise, culmination (with altitude) and moonset, and the next perigee and apogee (with their position between the extreme values) and node passage |
-| `/bild` | Current moon image as shown on the display (PNG) |
-| `/profilbild` | Update the bot's profile photo (and the group photo) now |
-| `/sonne` | Current sun coordinates: RA/Dec, azimuth/altitude |
-| `/bericht` | Send the daily report now (also to Pushover, if configured) |
-| `/config` | Show current configuration |
-| `/standort <lat> <lon> [elevation]` | Set observer location in decimal degrees, optionally with elevation above sea level in metres |
-| `/optionen <value>` | Set display options bitmask (see below) |
-| `/auto on\|off` | Enable or disable the daily report (auto mode) |
-| `/autozeit HH:MM` | Time of the daily report (local time) |
-| `/zeitzone <POSIX-TZ>` | Time zone used for all displayed times |
-| `/modus mond\|uhr` | Display mode: live moon or 24-hour clock |
+The commands are described under [Commands](#commands).
 
-**Auto mode:** once a day at the configured time the bot sends a compact report to the private chat, the group (if configured) and Pushover (if configured), for example:
+**Daily report:** once a day at the configured time (`daily`) the bot sends a compact report to the private chat, the group (if configured) and Pushover (if configured), for example:
 ```
-📅 27.09.2026
-
 ☼↑ 07:14 ☼↓ 19:05 (−2'3'')
 ☽↓ 08:12 ☽↑ 19:40
 🌔 73% (⬈) ▅⇡
@@ -91,7 +79,7 @@ In the group the bot only reacts to commands sent by the user `TELEGRAM_CHAT_ID`
 
 Sunrise/sunset are calculated with Meeus' method, moonrise/moonset by hourly sampling of the moon's altitude with quadratic (Lagrange) interpolation of the horizon crossing, using the horizon altitude after Meeus. Full and new moon are found by bisection of the moon's elongation. All calculations are done in UT; the report covers the local calendar day (events of the UT days overlapping it are converted to local time and filtered by local date).
 
-**Profile and group photo:** after start and then daily at the report time (independent of auto mode), the bot renders the current moon with the fixed display options 13 (darkened unilluminated side, NASA texture, libration), encodes it as a 240×240 JPEG on the device and sets it as its profile photo via `setMyProfilePhoto` and, if a group is configured, as the group photo via `setChatPhoto`. If an update fails, only the failed one is retried every 15 minutes. The JPEG is created in a temporary 48 KB RAM buffer; nothing is stored in flash.
+**Profile and group photo:** after start and then daily at the report time (independent of whether the daily report is switched on), the bot renders the current moon with the fixed display options 13 (darkened unilluminated side, NASA texture, libration), encodes it as a 240×240 JPEG on the device and sets it as its profile photo via `setMyProfilePhoto` and, if a group is configured, as the group photo via `setChatPhoto`. If an update fails, only the failed one is retried every 15 minutes. The JPEG is created in a temporary 48 KB RAM buffer; nothing is stored in flash.
 
 ### Pushover (optional)
 The daily report can also be delivered as a push notification via [Pushover](https://pushover.net). This works with or without the Telegram bot; if both are configured, the report goes to both.
@@ -103,7 +91,7 @@ The daily report can also be delivered as a push notification via [Pushover](htt
 #define PUSHOVER_USER_KEY  "uQiR..."
 #define PUSHOVER_DEVICE    ""   // optional: device name, empty = all devices
 ```
-Pushover only receives; auto mode and report time are set via Telegram or the serial interface (`set_auto`, `set_autotime`). If sending fails, it is retried every 5 minutes.
+Pushover only receives; the daily report is switched on and its time is set with `daily` via Telegram or the serial interface. If sending fails, it is retried every 5 minutes.
 
 ### NTP server
 The NTP server and UTC offset are configured in `src/MondPhase.ino`:
@@ -111,23 +99,27 @@ The NTP server and UTC offset are configured in `src/MondPhase.ino`:
 constexpr char NTP_SERVER[] = "pool.ntp.org";
 ```
 
-### Runtime configuration via serial interface
-All runtime settings are stored in flash (NVS) and survive reboots. Connect at **115200 baud** and use the following commands:
+## Commands
+Telegram and the serial interface (**115200 baud**) share the same commands. In Telegram they start with `/` (`/moon`), on the serial interface without (`moon`). Command names are English in every language. Settings are stored in flash (NVS) and survive reboots. **A settings command without an argument shows the current value, the possible values and the syntax**; with an argument it changes the setting.
 
-| Command | Description |
-|---|---|
-| `help` | Show available commands |
-| `config` | Show current configuration |
-| `set_location <lat> <lon> [elevation]` | Set observer location in decimal degrees, optionally with elevation in metres (e.g. `set_location 51.0 9.0 200`) |
-| `set_options <value>` | Set display options as a bitmask (see below) |
-| `moon [HH:MM:SS \| DD.MM.YYYY HH:MM:SS]` | Show moon for given time or current time |
-| `moon_run` | Start live display (updates every minute) |
-| `set_time DD.MM.YYYY HH:MM:SS` | Set system time manually (UTC) |
-| `wifi [on\|off]` | Enable or disable Wi-Fi |
-| `mode moon\|clock` | Display mode: live moon or 24-hour clock (persistent) |
-| `set_auto on\|off` | Enable or disable the daily report (Telegram/Pushover) |
-| `set_autotime HH:MM` | Time of the daily report (local time) |
-| `set_timezone <POSIX-TZ>` | Time zone for displayed times (default `CET-1CEST,M3.5.0,M10.5.0/3`) |
+| Command | Channel | Description |
+|---|---|---|
+| `help` | both | List of commands (`/start` in Telegram as well) |
+| `moon` | both | Current moon coordinates in degrees and arcminutes: ecliptic longitude/latitude, RA/Dec, azimuth (counted from south)/altitude; apparent diameter with its position between minimum and maximum, elongation, phase, libration, today's moonrise, culmination (with altitude) and moonset, and the next perigee and apogee (with their position between the extreme values) and node passage |
+| `sun` | both | Current sun coordinates: RA/Dec, azimuth/altitude |
+| `report` | both | Send the daily report now (also to Pushover, if configured) |
+| `image` | Telegram | Current moon image as shown on the display (PNG) |
+| `clock` | Telegram | Current image of the 24-hour clock (PNG), regardless of the display mode |
+| `avatar` | Telegram | Update the bot's profile photo (and the group photo) now |
+| `location [lat lon [elev]]` | both | Observer location in decimal degrees, optionally with elevation above sea level in metres (e.g. `location 51.0 9.0 200`) |
+| `options [value]` | both | Display options as a bitmask (see below); without argument a list of all options |
+| `mode [moon\|clock]` | both | Display mode: live moon or 24-hour clock |
+| `daily [on\|off\|HH:MM]` | both | Daily report on or off; a time (local time) sets the report time and switches it on. Without argument also the configured targets (Telegram chat, group, Pushover) |
+| `timezone [POSIX-TZ]` | both | Time zone used for all displayed times (default `CET-1CEST,M3.5.0,M10.5.0/3`); without argument also the local time |
+| `language [code]` | both | Language of all messages: `de` (default) or `en`. The Telegram command menu follows the language |
+| `show [[YYYY-MM-DD] HH:MM[:SS]]` | serial | Show the moon for a fixed time (UTC, today if no date is given); `show` without argument returns to the live display |
+| `time [[YYYY-MM-DD] HH:MM[:SS]]` | serial | Show or set the system time (UTC); NTP overwrites it again at the next synchronisation |
+| `wifi [on\|off]` | serial | Wi-Fi status, switch Wi-Fi on or off |
 
 **Display options bitmask** (combine with `+`):
 
@@ -140,7 +132,7 @@ All runtime settings are stored in flash (NVS) and survive reboots. Connect at *
 | 4 | 16 | Ignore the parallactic angle: celestial north up instead of the zenith |
 | 5 | 32 | Ignore the position angle of the moon's axis: lunar north pole up |
 
-Example: `set_options 9` enables earthshine + libration.
+Example: `options 9` enables earthshine + libration.
 
 By default the moon is shown as seen in the sky, with the zenith up. With bit 4 it appears as in an equatorially mounted telescope (celestial north up); with bits 4 and 5 combined, the lunar north pole points straight up, as in a lunar map. The terminator is rotated along with the moon, so the lit features stay correct.
 
@@ -175,7 +167,6 @@ Options: `-t` local time (`-u`: UTC; default now), `-o` display options bitmask 
 * The following libraries are fetched automatically by pioarduino:
   * `Adafruit GFX Library`
   * `Adafruit GC9A01A`
-  * `SerialCommands`
   * `UniversalTelegramBot`
   * `ArduinoJson` (v6)
   * `JPEGENC` (JPEG encoder for the bot's profile photo)

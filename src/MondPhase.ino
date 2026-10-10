@@ -15,14 +15,14 @@
 #include <Adafruit_GFX.h>     // Core graphics library
 #include <Adafruit_GC9A01A.h>
 
-#include <SerialCommands.h>
-
 // ── Konfiguration ────────────────────────────────────────────────────────────
 
 #include "astro.h"
 #include "credentials.h"
 #include "clock_face.h"
 #include "display_mode.h"
+#include "commands.h"
+#include "messages.h"
 
 WiFiMulti wifiMulti;
 
@@ -35,20 +35,13 @@ constexpr char   NTP_SERVER[]    = "pool.ntp.org";
 extern void calculateMoon(const struct tm& timeinfo, bool printInfo, Adafruit_GC9A01A* tft);
 
 // Persistente Konfiguration (definiert in Config.ino)
-extern astro::GeoLocation configLocation;
-extern int    configDisplayOptions;
-extern bool   configAutoMode;
-extern int    configAutoTime;
 extern int    configDisplayMode;
 extern void   loadConfig();
 extern void   saveConfig();
-extern bool   isValidTimezone(const char* tz);
-extern int    parseHHMM(const char* s);
 
 // Telegram-Bot (definiert in Telegram.ino)
 extern void setupTelegram();
 extern void handleTelegram();
-extern void resetAutoReportDay();
 
 // Display
 #define TFT_CS 7
@@ -62,292 +55,30 @@ mode currentMode = MODE_MOON;
 
 bool wifiOn = true;
 
-// -- Serial Commands
+// ── Serielle Befehle ─────────────────────────────────────────────────────────
 
-char serial_command_buffer_[100];
-SerialCommands serial_commands_(&Serial, serial_command_buffer_, sizeof(serial_command_buffer_), "\r\n", " ");
+// Liest Zeichen bis zum Zeilenende und führt die Zeile als Befehl aus (Commands.ino).
+// Zu lange Zeilen werden abgeschnitten.
+static char serialLine[100];
+static size_t serialLineLen = 0;
 
-//This is the default handler, and gets called when no other command matches. 
-// Note: It does not get called for one_key commands that do not match
-void cmd_unrecognized(SerialCommands* sender, const char* cmd)
-{
-  sender->GetSerial()->print("Unrecognized command [");
-  sender->GetSerial()->print(cmd);
-  sender->GetSerial()->println("]");
-  sender->GetSerial()->println("Type 'help' for a list of commands.");
-}
-
-bool parseDateTime(const char* arg, struct tm& tm) {
-    memset(&tm, 0, sizeof(tm));
-    char* parsed = strptime(arg, "%d.%m.%Y %H:%M:%S", &tm);
-    if (parsed == nullptr) {
-        // Nur Uhrzeit: HH:MM – aktuelles Datum übernehmen
-        struct tm now;
-        if (!getLocalTime(&now)) {
-            return false;
+static void readSerialCommands() {
+    while (Serial.available() > 0) {
+        const char c = (char) Serial.read();
+        if (c != '\r' && c != '\n') {
+            if (serialLineLen < sizeof(serialLine) - 1) serialLine[serialLineLen++] = c;
+            continue;
         }
-        tm = now;
-        parsed = strptime(arg, "%H:%M:%S", &tm);
-    }
-    if (parsed == nullptr) {
-        return false;
-    }
-    return true;
-}
-
-void cmd_moon(SerialCommands* sender)
-{
-    struct tm tm;
-    const char* arg0 = sender->Next();
-
-    if (arg0 != nullptr) {
-        char datetime[50];
-        // Versuche zuerst vollständiges Datum+Zeit: DD.MM.YYYY HH:MM:SS
-        const char* arg1 = sender->Next();
-        if (arg1 != nullptr) {
-            snprintf(datetime, sizeof(datetime), "%s %s", arg0, arg1);
-        } else {
-            snprintf(datetime, sizeof(datetime), "%s", arg0);
+        if (serialLineLen == 0) continue;
+        serialLine[serialLineLen] = '\0';
+        serialLineLen = 0;
+        Reply reply = runCommand(CH_SERIAL, serialLine, "");
+        if (reply.html) {
+            reply.text.replace("<pre>", "\n");
+            reply.text.replace("</pre>", "");
         }
-        if (!parseDateTime(datetime, tm)) {
-            sender->GetSerial()->println("Ungültiges Format:");
-            sender->GetSerial()->println(datetime);
-            sender->GetSerial()->println("Erwartet: HH:MM:SS oder TT.MM.JJJJ HH:MM:SS");
-            return;
-        }
-    } else {
-        if (!getLocalTime(&tm)) {
-            sender->GetSerial()->println("Keine gültige NTP-Zeit verfügbar.");
-            return;
-        }
+        Serial.println(reply.text);
     }
-
-    sender->GetSerial()->println("Calculating moon position...");
-    currentMode = MODE_STATIC;
-    calculateMoon(tm, true, &tft);
-    sender->GetSerial()->println("Done.");
-}
-SerialCommand cmd_moon_("moon", cmd_moon);
-
-void cmd_moon_run_(SerialCommands* sender)
-{
-    sender->GetSerial()->println("Starting dynamic moon display...");
-    setDisplayMode(DISPLAY_MODE_MOON);
-}
-SerialCommand cmd_moon_run("moon_run", cmd_moon_run_);
-
-void cmd_mode_(SerialCommands* sender)
-{
-    const char* arg0 = sender->Next();
-    if (arg0 != nullptr && strcmp(arg0, "moon") == 0) {
-        setDisplayMode(DISPLAY_MODE_MOON);
-    } else if (arg0 != nullptr && strcmp(arg0, "clock") == 0) {
-        setDisplayMode(DISPLAY_MODE_CLOCK);
-    } else {
-        sender->GetSerial()->println("Ungültiges Argument. Erwartet: mode moon|clock");
-        return;
-    }
-    sender->GetSerial()->printf("Anzeigemodus gespeichert: %s\n", displayModeName());
-}
-SerialCommand cmd_mode("mode", cmd_mode_);
-
-void cmd_set_time_(SerialCommands* sender)
-{
-    const char* arg0 = sender->Next();
-    const char* arg1 = sender->Next();
-    if (arg0 == nullptr || (arg1 != nullptr && sender->Next() != nullptr)) {
-        sender->GetSerial()->println("Ungültiges Format. Erwartet: TT.MM.JJJJ HH:MM:SS");
-        return;
-    }
-    struct tm tm;
-    char datetime[50];
-    if (arg1 != nullptr) {
-        snprintf(datetime, sizeof(datetime), "%s %s", arg0, arg1);
-    }
-    if (!parseDateTime(datetime, tm)) {
-        sender->GetSerial()->println("Ungültiges Format. Erwartet: TT.MM.JJJJ HH:MM:SS");
-        return;
-    }
-    time_t t = mktime(&tm);
-    struct timeval now = { .tv_sec = t };
-    settimeofday(&now, nullptr);
-    sender->GetSerial()->println("Zeit aktualisiert.");
-}
-SerialCommand cmd_set_time("set_time", cmd_set_time_);
-
-void cmd_wifi_(SerialCommands* sender)
-{
-    sender->GetSerial()->println("Aktuelle WLAN-Verbindungen:");
-    sender->GetSerial()->print(WiFi.SSID());
-    sender->GetSerial()->print(" (");
-    sender->GetSerial()->print(WiFi.RSSI());
-    sender->GetSerial()->println(" dBm)");
-
-    const char *arg0 = sender->Next();
-    if (arg0 != nullptr) {
-        if(strcmp(arg0, "on") == 0) {
-            sender->GetSerial()->println("WLAN-Verbindung aktivieren...");
-            wifiOn = true;
-        } else if (strcmp(arg0, "off") == 0) {
-            sender->GetSerial()->println("WLAN-Verbindung trennen...");
-            WiFi.disconnect(true);
-            wifiOn = false;
-        } else {
-            sender->GetSerial()->println("Ungültiges Argument. Erwartet: on oder off");
-        }
-    }
-}
-SerialCommand cmd_wifi("wifi", cmd_wifi_);
-
-void cmd_set_location_(SerialCommands* sender)
-{
-    const char* arg0 = sender->Next();
-    const char* arg1 = sender->Next();
-    const char* arg2 = sender->Next();  // optional: Höhe über dem Meeresspiegel [m]
-    if (arg0 == nullptr || arg1 == nullptr) {
-        sender->GetSerial()->println("Ungültiges Format. Erwartet: set_location <lat> <lon> [höhe]");
-        return;
-    }
-    char* endLat = nullptr;
-    char* endLon = nullptr;
-    char* endElev = nullptr;
-    double lat = strtod(arg0, &endLat);
-    double lon = strtod(arg1, &endLon);
-    double elev = (arg2 != nullptr) ? strtod(arg2, &endElev) : 0.0;
-    if (endLat == arg0 || endLon == arg1 || (arg2 != nullptr && endElev == arg2)
-        || lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0 || elev < -500.0 || elev > 9000.0) {
-        sender->GetSerial()->println("Ungültige Werte. Lat: -90..90, Lon: -180..180, Höhe: -500..9000 m");
-        return;
-    }
-    configLocation.latitude  = astro::Angle::fromDeg(lat);
-    configLocation.longitude = astro::Angle::fromDeg(lon);
-    configLocation.elevation = elev;
-    saveConfig();
-    requestRedraw();
-    sender->GetSerial()->printf("Standort gespeichert: %.6f / %.6f, %.0f m\n", lat, lon, elev);
-}
-SerialCommand cmd_set_location("set_location", cmd_set_location_);
-
-void cmd_set_options_(SerialCommands* sender)
-{
-    const char* arg0 = sender->Next();
-    if (arg0 == nullptr) {
-        sender->GetSerial()->println("Ungültiges Format. Erwartet: set_options <wert>");
-        return;
-    }
-    char* end = nullptr;
-    long value = strtol(arg0, &end, 0); // 0 = autodetect dec/hex/oct
-    if (end == arg0 || value < 0 || value > 0x7FFFFFFF) {
-        sender->GetSerial()->println("Ungültiger Wert für Options.");
-        return;
-    }
-    configDisplayOptions = (int) value;
-    saveConfig();
-    requestRedraw();
-    sender->GetSerial()->printf("Display-Optionen gespeichert: %d\n", configDisplayOptions);
-}
-SerialCommand cmd_set_options("set_options", cmd_set_options_);
-
-void cmd_set_auto_(SerialCommands* sender)
-{
-    const char* arg0 = sender->Next();
-    if (arg0 != nullptr && strcmp(arg0, "on") == 0) {
-        configAutoMode = true;
-    } else if (arg0 != nullptr && strcmp(arg0, "off") == 0) {
-        configAutoMode = false;
-    } else {
-        sender->GetSerial()->println("Ungültiges Argument. Erwartet: set_auto on|off");
-        return;
-    }
-    saveConfig();
-    resetAutoReportDay();
-    sender->GetSerial()->printf("Auto-Modus gespeichert: %s\n", configAutoMode ? "an" : "aus");
-}
-SerialCommand cmd_set_auto("set_auto", cmd_set_auto_);
-
-void cmd_set_autotime_(SerialCommands* sender)
-{
-    const char* arg0 = sender->Next();
-    int minutes = (arg0 != nullptr) ? parseHHMM(arg0) : -1;
-    if (minutes < 0) {
-        sender->GetSerial()->println("Ungültiges Format. Erwartet: set_autotime HH:MM");
-        return;
-    }
-    configAutoTime = minutes;
-    saveConfig();
-    resetAutoReportDay();
-    sender->GetSerial()->printf("Berichtszeit gespeichert: %02d:%02d\n", configAutoTime / 60, configAutoTime % 60);
-}
-SerialCommand cmd_set_autotime("set_autotime", cmd_set_autotime_);
-
-void cmd_set_timezone_(SerialCommands* sender)
-{
-    const char* arg0 = sender->Next();
-    if (arg0 == nullptr || !isValidTimezone(arg0)) {
-        sender->GetSerial()->println("Ungültige Zeitzone. Beispiel: set_timezone CET-1CEST,M3.5.0,M10.5.0/3");
-        return;
-    }
-    strlcpy(configLocation.timezone, arg0, sizeof(configLocation.timezone));
-    saveConfig();
-    resetAutoReportDay();
-    requestRedraw();
-    sender->GetSerial()->printf("Zeitzone gespeichert: %s\n", configLocation.timezone);
-}
-SerialCommand cmd_set_timezone("set_timezone", cmd_set_timezone_);
-
-void cmd_config_(SerialCommands* sender)
-{
-    sender->GetSerial()->println("Aktuelle Konfiguration:");
-    sender->GetSerial()->printf("  Latitude:  %.6f\n", configLocation.latitude.deg());
-    sender->GetSerial()->printf("  Longitude: %.6f\n", configLocation.longitude.deg());
-    sender->GetSerial()->printf("  Höhe:      %.0f m\n", configLocation.elevation);
-    sender->GetSerial()->printf("  Options:   %d (0x%X)\n", configDisplayOptions, configDisplayOptions);
-    sender->GetSerial()->printf("    [%c] darken_unlit    (1)\n",   (configDisplayOptions & 1) ? 'x' : ' ');
-    sender->GetSerial()->printf("    [%c] bluish_tint     (2)\n",   (configDisplayOptions & 2) ? 'x' : ' ');
-    sender->GetSerial()->printf("    [%c] use_nasa_model  (4)\n",   (configDisplayOptions & 4) ? 'x' : ' ');
-    sender->GetSerial()->printf("    [%c] use_libration   (8)\n",   (configDisplayOptions & 8) ? 'x' : ' ');
-    sender->GetSerial()->printf("    [%c] ignore_parallactic (16)\n", (configDisplayOptions & 16) ? 'x' : ' ');
-    sender->GetSerial()->printf("    [%c] ignore_position_angle (32)\n", (configDisplayOptions & 32) ? 'x' : ' ');
-    sender->GetSerial()->printf("  Auto-Modus: %s, täglich um %02d:%02d\n", configAutoMode ? "an" : "aus", configAutoTime / 60, configAutoTime % 60);
-    sender->GetSerial()->printf("  Zeitzone:  %s\n", configLocation.timezone);
-    sender->GetSerial()->printf("  Anzeige:   %s\n", displayModeName());
-}
-SerialCommand cmd_config("config", cmd_config_);
-
-void cmd_help(SerialCommands* sender)
-{
-  sender->GetSerial()->println("Available commands:");
-  sender->GetSerial()->println("  help - Show this help message");
-  sender->GetSerial()->println("  moon [HH:MM:SS | DD.MM.YYYY HH:MM:SS] - Display moon phase for given time (or current time if no argument)");
-  sender->GetSerial()->println("  moon_run - Start dynamic moon display (updates every minute)");
-  sender->GetSerial()->println("  mode moon|clock - Anzeigemodus: Mond oder 24h-Uhr (persistent)");
-  sender->GetSerial()->println("  wifi [on|off] - Turn WiFi on or off");
-  sender->GetSerial()->println("  set_time TT.MM.JJJJ HH:MM:SS - Set system time (UTC)");
-  sender->GetSerial()->println("  set_location <lat> <lon> [höhe] - Standort persistent speichern (Dezimalgrad, Höhe in m)");
-  sender->GetSerial()->println("  set_options <wert> - Darstellungsoptionen persistent speichern (Bitfeld)");
-  sender->GetSerial()->println("    Bits: 1=darken_unlit, 2=bluish_tint, 4=use_nasa_model, 8=use_libration,");
-  sender->GetSerial()->println("          16=ignore_parallactic, 32=ignore_position_angle");
-  sender->GetSerial()->println("  set_auto on|off - Täglichen Bericht (Telegram/Pushover) ein/aus");
-  sender->GetSerial()->println("  set_autotime HH:MM - Uhrzeit des Tagesberichts (Lokalzeit)");
-  sender->GetSerial()->println("  set_timezone <POSIX-TZ> - Zeitzone für Ausgaben, z. B. CET-1CEST,M3.5.0,M10.5.0/3");
-  sender->GetSerial()->println("  config - Aktuelle Konfiguration anzeigen");
-}
-SerialCommand cmd_help_("help", cmd_help);
-
-void setupSerialCommands() {
-    serial_commands_.AddCommand(&cmd_help_);
-    serial_commands_.AddCommand(&cmd_moon_);
-    serial_commands_.AddCommand(&cmd_moon_run);
-    serial_commands_.AddCommand(&cmd_mode);
-    serial_commands_.AddCommand(&cmd_set_time);
-    serial_commands_.AddCommand(&cmd_wifi);
-    serial_commands_.AddCommand(&cmd_set_location);
-    serial_commands_.AddCommand(&cmd_set_options);
-    serial_commands_.AddCommand(&cmd_set_auto);
-    serial_commands_.AddCommand(&cmd_set_autotime);
-    serial_commands_.AddCommand(&cmd_set_timezone);
-    serial_commands_.AddCommand(&cmd_config);
-    serial_commands_.SetDefaultHandler(cmd_unrecognized);
 }
 
 // ── Setup & Loop ─────────────────────────────────────────────────────────────
@@ -368,9 +99,6 @@ void setup() {
 
     tft.begin();
     tft.fillScreen(GC9A01A_BLACK);
-
-    // Serial Commands
-    setupSerialCommands();
 
     setupTelegram();
 
@@ -397,8 +125,19 @@ void setDisplayMode(int displayMode) {
     requestRedraw();
 }
 
-const char* displayModeName() {
-    return (configDisplayMode == DISPLAY_MODE_CLOCK) ? "Uhr" : "Mond";
+// Zeigt den Mond zu einer festen Zeit, bis requestRedraw() wieder die Live-Anzeige startet.
+void showMoonAt(const struct tm& utc) {
+    currentMode = MODE_STATIC;
+    calculateMoon(utc, true, &tft);
+}
+
+bool wifiEnabled() {
+    return wifiOn;
+}
+
+void setWifiEnabled(bool on) {
+    if (!on) WiFi.disconnect(true);
+    wifiOn = on;
 }
 
 void loop() {
@@ -408,7 +147,7 @@ void loop() {
         lastWifiCheck = millis();
     }
 
-    serial_commands_.ReadSerial();
+    readSerialCommands();
     handleTelegram();
     struct tm zeitInfo;
     if (currentMode == MODE_MOON && getLocalTime(&zeitInfo) && (millis() - lastMoonCalc > 60000)) {
@@ -420,7 +159,7 @@ void loop() {
     } else if (currentMode == MODE_CLOCK) {
         // 24h-Uhr: einmal pro Minute aktualisieren
         time_t now = time(nullptr);
-        if (now > 1700000000 && now / 60 != lastClockMinute) {
+        if (now >= MIN_VALID_TIME && now / 60 != lastClockMinute) {
             unsigned long start = millis();
             drawClockFace(&tft, now);
             lastClockMinute = now / 60;

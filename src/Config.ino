@@ -5,6 +5,7 @@
 
 #include "astro.h"
 #include "display_mode.h"
+#include "i18n.h"
 
 // Persistente Konfiguration (RAM-Kopie der NVS-Werte).
 // Defaults werden verwendet, wenn noch nichts im Flash gespeichert wurde.
@@ -23,6 +24,10 @@ bool   configAutoMode       = false;
 int    configAutoTime       = 7 * 60;
 // Anzeigemodus (display_mode.h)
 int    configDisplayMode    = DISPLAY_MODE_MOON;
+// Sprache der Ausgaben als Index der registrierten Sprachen (i18n.h); im Flash steht der Code ("de"),
+// damit gespeicherte Werte gültig bleiben, wenn Sprachen hinzukommen
+static constexpr const char* DEFAULT_LANGUAGE = "de";
+int    configLanguage       = findLanguage(DEFAULT_LANGUAGE);
 
 static Preferences prefs;
 static constexpr const char* PREFS_NAMESPACE = "moon-cfg";
@@ -38,6 +43,8 @@ void loadConfig() {
     const String tz      = prefs.getString("tz",    configLocation.timezone);
     strlcpy(configLocation.timezone, tz.c_str(), sizeof(configLocation.timezone));
     configDisplayMode    = prefs.getInt   ("mode",  configDisplayMode);
+    const int lang       = findLanguage(prefs.getString("lang", DEFAULT_LANGUAGE).c_str());
+    configLanguage       = (lang >= 0) ? lang : findLanguage(DEFAULT_LANGUAGE);
     prefs.end();
 }
 
@@ -51,6 +58,7 @@ void saveConfig() {
     prefs.putInt   ("atime", configAutoTime);
     prefs.putString("tz",    configLocation.timezone);
     prefs.putInt   ("mode",  configDisplayMode);
+    prefs.putString("lang",  languageCode(configLanguage));
     prefs.end();
 }
 

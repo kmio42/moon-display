@@ -255,18 +255,15 @@ MoonOutlook moonOutlookFor(time_t t) {
     return o;
 }
 
-const char* moonPhaseName(double phase, bool waxing) {
-    if (phase < 0.03) return "Neumond";
-    if (phase > 0.97) return "Vollmond";
-    if (fabs(phase - 0.5) < 0.03) return waxing ? "Erstes Viertel" : "Letztes Viertel";
-    if (phase < 0.5) return waxing ? "Zunehmende Sichel" : "Abnehmende Sichel";
-    return waxing ? "Zunehmender Mond" : "Abnehmender Mond";
+MoonPhase moonPhaseOf(double phase, bool waxing) {
+    if (phase < 0.03) return MoonPhase::New;
+    if (phase > 0.97) return MoonPhase::Full;
+    if (fabs(phase - 0.5) < 0.03) return waxing ? MoonPhase::FirstQuarter : MoonPhase::LastQuarter;
+    if (phase < 0.5) return waxing ? MoonPhase::WaxingCrescent : MoonPhase::WaningCrescent;
+    return waxing ? MoonPhase::WaxingGibbous : MoonPhase::WaningGibbous;
 }
 
 const char* moonPhaseEmoji(double phase, bool waxing) {
-    if (phase < 0.03) return "🌑";
-    if (phase > 0.97) return "🌕";
-    if (fabs(phase - 0.5) < 0.03) return waxing ? "🌓" : "🌗";
-    if (phase < 0.5) return waxing ? "🌒" : "🌘";
-    return waxing ? "🌔" : "🌖";
+    static const char* const EMOJI[MOON_PHASE_COUNT] = {"🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"};
+    return EMOJI[static_cast<int>(moonPhaseOf(phase, waxing))];
 }

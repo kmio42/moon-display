@@ -1,6 +1,7 @@
 /**
- * Telegram.ino – Telegram-Bot für Einstellungen, Koordinaten und Tagesbericht
+ * Telegram.ino – Telegram-Bot: Befehle, Bilder und Tagesbericht
  *
+ * Die Befehle selbst stehen in Commands.ino, die Texte in Messages.ino.
  * Nur Nachrichten von TELEGRAM_CHAT_ID werden beantwortet, im privaten Chat oder in der Gruppe
  * TELEGRAM_GROUP_ID. In die Gruppe postet der Bot außerdem den Tagesbericht und setzt das Mondbild
  * als Gruppenbild.
@@ -13,15 +14,17 @@
 #include <UniversalTelegramBot.h>
 #include <JPEGENC.h>
 #include <new>
-#include <algorithm>
-#include <iterator>
 #include <time.h>
 
 #include "astro.h"
 #include "ephemeris.h"
 #include "moon_render.h"
+#include "clock_face.h"
 #include "png_stream.h"
 #include "display_mode.h"
+#include "commands.h"
+#include "messages.h"
+#include "i18n.h"
 #include "credentials.h"
 
 #ifndef TELEGRAM_BOT_TOKEN
@@ -35,20 +38,9 @@
 #endif
 
 // Persistente Konfiguration (definiert in Config.ino)
-extern astro::GeoLocation configLocation;
-extern int    configDisplayOptions;
 extern bool   configAutoMode;
 extern int    configAutoTime;
-extern void   saveConfig();
 extern void   utcToLocal(time_t t, struct tm& out);
-extern bool   isValidTimezone(const char* tz);
-extern int    parseHHMM(const char* s);
-
-// Display neu zeichnen (definiert in MondPhase.ino)
-extern void requestRedraw();
-extern void setDisplayMode(int displayMode);
-extern const char* displayModeName();
-extern int configDisplayMode;
 
 // Pushover (definiert in Pushover.ino)
 extern bool pushoverEnabled();
@@ -57,7 +49,6 @@ extern bool sendPushover(const String& message, const String& title);
 constexpr unsigned long TELEGRAM_POLL_INTERVAL = 3000;  // ms
 constexpr unsigned int  TELEGRAM_WAIT_FOR_RESPONSE = 5000; // ms, Library-Standard 1500 ist bei langsamem Netz zu knapp
 constexpr int           TELEGRAM_MAX_MESSAGE_LENGTH = 4000; // Byte, Library-Standard 1500 reicht nicht für jedes Update
-constexpr time_t        MIN_VALID_TIME         = 1700000000; // Zeit gilt erst nach NTP-Sync als gültig
 constexpr unsigned long PUSHOVER_RETRY_INTERVAL = 5UL * 60 * 1000; // ms, schont das Nachrichtenkontingent
 
 static WiFiClientSecure telegramClient;
@@ -81,348 +72,19 @@ static bool groupEnabled() {
     return strlen(TELEGRAM_GROUP_ID) > 0;
 }
 
-// ── Formatierung ─────────────────────────────────────────────────────────────
-
-// Formatiert eine UTC-Zeit als lokale Uhrzeit "HH:MM".
-static String formatLocalTime(time_t t) {
-    struct tm lt;
-    utcToLocal(t, lt);
-    char buf[8];
-    snprintf(buf, sizeof(buf), "%02d:%02d", lt.tm_hour, lt.tm_min);
-    return buf;
+// Für den Befehl daily: Ziele des Tagesberichts
+bool telegramConfigured() {
+    return telegramEnabled;
 }
 
-// Formatiert eine UTC-Zeit als lokales Datum "TT.MM.".
-static String formatLocalDate(time_t t) {
-    struct tm lt;
-    utcToLocal(t, lt);
-    char buf[8];
-    snprintf(buf, sizeof(buf), "%02d.%02d.", lt.tm_mday, lt.tm_mon + 1);
-    return buf;
+bool telegramGroupConfigured() {
+    return telegramEnabled && groupEnabled();
 }
 
-static String formatDeg(astro::Angle angle) {
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%+.2f°", angle.deg());
-    return buf;
+// Nach einem Sprachwechsel das Befehlsmenü mit den neuen Beschreibungen setzen
+void telegramLanguageChanged() {
+    telegramCommandsSet = false;
 }
-
-static String formatRa(astro::Angle angle) {
-    double h = angle.normalized().hours();
-    int hh = (int) h;
-    int mm = (int) ((h - hh) * 60.0);
-    int ss = (int) (((h - hh) * 60.0 - mm) * 60.0);
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%02dh %02dm %02ds", hh, mm, ss);
-    return buf;
-}
-
-static String formatAzimut(astro::Angle angle) {
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%.1f°", angle.normalized().deg());
-    return buf;
-}
-
-// Formatiert einen Winkel klassisch als ±DDD°MM', gerundet auf ganze Bogenminuten.
-// full360: Winkel wird auf 0–360° normiert (Länge, Azimut).
-static String formatDm(astro::Angle angle, bool sign, bool full360 = false) {
-    const double deg = full360 ? angle.normalized().deg() : angle.deg();
-    long minutes = lround(fabs(deg) * 60.0);
-    if (full360) minutes %= 360 * 60;  // 359°59.6' wird zu 0°00'
-    char buf[20];
-    if (sign) {
-        snprintf(buf, sizeof(buf), "%c%ld°%02ld'", deg < 0 && minutes > 0 ? '-' : '+', minutes / 60, minutes % 60);
-    } else {
-        snprintf(buf, sizeof(buf), "%ld°%02ld'", minutes / 60, minutes % 60);
-    }
-    return buf;
-}
-
-// Formatiert eine Rektaszension als HHhMMm, gerundet auf ganze Zeitminuten.
-static String formatHm(astro::Angle angle) {
-    const double h = angle.normalized().hours();
-    const long minutes = lround(h * 60.0) % (24 * 60);
-    char buf[12];
-    snprintf(buf, sizeof(buf), "%02ldh%02ldm", minutes / 60, minutes % 60);
-    return buf;
-}
-
-// Formatiert einen kleinen Winkel (Monddurchmesser) als MM'SS".
-static String formatArcmin(astro::Angle angle) {
-    const long seconds = lround(angle.arcsec());
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%ld'%02ld\"", seconds / 60, seconds % 60);
-    return buf;
-}
-
-static String formatNow() {
-    struct tm lt;
-    utcToLocal(time(nullptr), lt);
-    char buf[32];
-    strftime(buf, sizeof(buf), "%d.%m.%Y %H:%M", &lt);
-    return buf;
-}
-
-static bool currentUtc(struct tm& utc) {
-    time_t now = time(nullptr);
-    if (now < MIN_VALID_TIME) return false;
-    gmtime_r(&now, &utc);
-    return true;
-}
-
-// ── Nachrichten ──────────────────────────────────────────────────────────────
-
-String buildDailyReport() {
-    struct tm utc;
-    if (!currentUtc(utc)) return "Keine gültige Uhrzeit (NTP) verfügbar.";
-
-    time_t now = time(nullptr);
-    struct tm lt;
-    utcToLocal(now, lt);
-    const time_t dayStart = now - (lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec);
-
-    DayEvents today     = eventsForLocalDay(now, true);
-    DayEvents yesterday = eventsForLocalDay(dayStart - 1, false);
-    SkyState sky = computeSky(utc);
-
-    char buf[64];
-    strftime(buf, sizeof(buf), "📅 %d.%m.%Y", &lt);
-    String msg = "";buf;
-    //msg += "\n\n";
-
-    if (today.sunValid) {
-        msg += "☼\uFE0E↑ ";
-        msg += today.hasSunrise ? formatLocalTime(today.sunrise) : String("-");
-        msg += "\u2003☼\uFE0E↓ ";
-        msg += today.hasSunset ? formatLocalTime(today.sunset) : String("-");
-        if (today.hasSunset && yesterday.hasSunset) {
-            // Astronomische Differenz, unabhängig von einer Sommerzeitumstellung
-            long sec = (long) (today.sunset - yesterday.sunset) - 86400L;
-            long absSec = labs(sec);
-            snprintf(buf, sizeof(buf), " (%s%ld'%ld'')", sec < 0 ? "−" : "+", absSec / 60, absSec % 60);
-            msg += buf;
-        }
-        msg += "\n";
-    } else {
-        msg += "☀\n";
-    }
-
-    // Mondauf-/untergang in zeitlicher Reihenfolge, fehlende Ereignisse weglassen
-    String rise = today.hasMoonrise ? "☽↑ " + formatLocalTime(today.moonrise) : String();
-    String set  = today.hasMoonset  ? "☽↓ " + formatLocalTime(today.moonset)  : String();
-    bool setFirst = today.hasMoonrise && today.hasMoonset && today.moonset < today.moonrise;
-    String first  = setFirst ? set : rise;
-    String second = setFirst ? rise : set;
-    msg += first;
-    if (first.length() && second.length()) msg += "\u2003";
-    msg += second;
-    if (!first.length() && !second.length()) msg += "☽-";
-    msg += "\n";
-    // Phase, Kulminationshöhe als Balken und deren Tendenz
-    static const char* const HEIGHT_BARS[] = {"▁", "▂", "▃", "▅", "▇"};
-    MoonOutlook outlook = moonOutlookFor(now);
-    snprintf(buf, sizeof(buf), "%s %.0f%% (%s)\u2003%s%s",
-             moonPhaseEmoji(sky.phase, sky.waxing), sky.phase * 100.0, sky.waxing ? "⬈" : "⬊",
-             HEIGHT_BARS[outlook.heightLevel], outlook.heightRising ? "⇡" : "⇣");
-    msg += buf;
-
-    // Finsternisse und Super-/Minimond der nächsten 14 Tage
-    String events;
-    if (outlook.lunarEclipse) {
-        events += String(" 🌕🔴") + (outlook.lunarEclipseVisible ? "" : "✗") + " " + formatLocalDate(outlook.fullMoon);
-    }
-    if (outlook.solarEclipse) {
-        events += " ☀🌑 " + formatLocalDate(outlook.newMoon);
-    }
-    if (outlook.superMoon) {
-        events += " 🌕＋ " + formatLocalDate(outlook.fullMoon);
-    }
-    if (outlook.miniMoon) {
-        events += " 🌕－ " + formatLocalDate(outlook.fullMoon);
-    }
-    if (events.length()) {
-        msg += "\n" + events.substring(1);
-    }
-    return msg;
-}
-
-// Extremwerte der Mondentfernung im 21. Jahrhundert (gerundet), Grenzen für den Durchmesser
-constexpr double MOON_PERIGEE_MIN = 356400.0;  // km
-constexpr double MOON_APOGEE_MAX  = 406700.0;  // km
-constexpr int    BLOCK_LABEL_WIDTH = 10;       // Zeichen
-
-// Scheinbarer Durchmesser des Mondes bei der Entfernung distance [km]
-static astro::Angle moonDiameter(double distance) {
-    return 2.0 * astro::Angle::asin(astro::MOON_RADIUS / distance);
-}
-
-// Lage des Durchmessers zwischen Apogäum (0 %) und Perigäum (100 %) der Extremwerte
-static double diameterPercent(double distance) {
-    const astro::Angle dMin = moonDiameter(MOON_APOGEE_MAX);
-    const astro::Angle dMax = moonDiameter(MOON_PERIGEE_MIN);
-    return constrain((moonDiameter(distance) - dMin) / (dMax - dMin) * 100.0, 0.0, 100.0);
-}
-
-// "TT.MM. HH:MM" in Lokalzeit
-static String formatLocalDateTime(time_t t) {
-    return formatLocalDate(t) + " " + formatLocalTime(t);
-}
-
-// Eine Zeile des Festbreiten-Blocks. Die Bezeichnung wird auf BLOCK_LABEL_WIDTH Zeichen aufgefüllt;
-// gezählt werden Zeichen, nicht UTF-8-Bytes (wegen "ö").
-static String blockLine(const char* label, const String& value) {
-    String line = label;
-    int chars = 0;
-    for (const char* p = label; *p; p++) {
-        if ((*p & 0xC0) != 0x80) chars++;
-    }
-    for (; chars < BLOCK_LABEL_WIDTH; chars++) line += ' ';
-    return line + value + "\n";
-}
-
-// Mondkoordinaten wie in einem Sternprogramm, als HTML mit Festbreiten-Block (parse_mode HTML).
-static String buildMoonMessage() {
-    struct tm utc;
-    if (!currentUtc(utc)) return "Keine gültige Uhrzeit (NTP) verfügbar.";
-    SkyState sky = computeSky(utc);
-    const time_t now = time(nullptr);
-
-    char buf[48];
-    String msg = String(moonPhaseEmoji(sky.phase, sky.waxing)) + " Mond – " + formatNow() + "\n<pre>";
-
-    msg += blockLine("Ekl. L/B", formatDm(sky.moon.longitude, true, true) + "/" + formatDm(sky.moon.latitude, true));
-    msg += blockLine("RA/Dek", formatHm(sky.moonRaDek.ra) + "/" + formatDm(sky.moonRaDek.dec, true));
-    // Azimut nach Meeus von Süden gezählt (S=0°, W=90°)
-    msg += blockLine("Az/Höhe", formatDm(sky.moonAzH.azimuth, true, true) + "/" + formatDm(sky.moonAzH.altitude, true));
-
-    snprintf(buf, sizeof(buf), " (%.0f %%)", diameterPercent(sky.moon.distance));
-    msg += blockLine("Durchm.", formatArcmin(moonDiameter(sky.moon.distance)) + buf);
-
-    // Elongation, Formel 46.2 aus "Astronomische Algorithmen" von Jean Meeus (Breite der Sonne = 0)
-    const astro::Angle elongation = astro::Angle::acos(cos(sky.moon.latitude) * cos(sky.moon.longitude - sky.sun.longitude));
-    msg += blockLine("Elong.", formatDm(elongation, false) + (sky.waxing ? " Ost" : " West"));
-
-    snprintf(buf, sizeof(buf), "%s, %.1f %%", sky.waxing ? "zunehmend" : "abnehmend", sky.phase * 100.0);
-    msg += blockLine("Phase", buf);
-    msg += blockLine("Librat.", "L " + formatDm(sky.moonAxle.libration.longitude, true)
-                              + " / B " + formatDm(sky.moonAxle.libration.latitude, true));
-
-    // Aufgang, Kulmination und Untergang des lokalen Tages in zeitlicher Reihenfolge,
-    // fehlende Ereignisse am Ende mit "-"
-    const DayEvents today = eventsForLocalDay(now, true);
-    String transitHeight;  // Höhe bei der Kulmination (topozentrisch)
-    if (today.hasMoonTransit) {
-        struct tm transitUtc;
-        gmtime_r(&today.moonTransit, &transitUtc);
-        transitHeight = ", " + formatDm(computeSky(transitUtc).moonAzH.altitude, true);
-    }
-    struct Event {
-        const char* label;
-        bool valid;
-        time_t time;
-        String suffix;
-    } events[] = {
-        {"Aufgang",   today.hasMoonrise,    today.moonrise,    ""},
-        {"Kulmin.",   today.hasMoonTransit, today.moonTransit, transitHeight},
-        {"Untergang", today.hasMoonset,     today.moonset,     ""},
-    };
-    std::stable_sort(std::begin(events), std::end(events), [](const Event& a, const Event& b) {
-        if (a.valid != b.valid) return a.valid;
-        return a.valid && a.time < b.time;
-    });
-    for (const Event& e : events) {
-        msg += blockLine(e.label, e.valid ? formatLocalTime(e.time) + e.suffix : String("-"));
-    }
-
-    // Nächstes Perigäum/Apogäum mit Lage zwischen den Extremwerten und nächster Knotendurchgang
-    const astro::Apsis perigee = astro::calculateNextMoonApsis(sky.jd, astro::ApsisType::Periapsis);
-    const astro::Apsis apogee  = astro::calculateNextMoonApsis(sky.jd, astro::ApsisType::Apoapsis);
-    snprintf(buf, sizeof(buf), " (%.0f %%)", diameterPercent(perigee.distance));
-    msg += blockLine("Perigäum", formatLocalDateTime(astro::JulianDay(perigee.jde).toUnixTime()) + buf);
-    snprintf(buf, sizeof(buf), " (%.0f %%)", diameterPercent(apogee.distance));
-    msg += blockLine("Apogäum", formatLocalDateTime(astro::JulianDay(apogee.jde).toUnixTime()) + buf);
-    const astro::NodePassage node = astro::calculateNextMoonNode(sky.jd);
-    msg += blockLine("Knoten", formatLocalDateTime(astro::JulianDay(node.jde).toUnixTime()) + (node.ascending ? " aufst." : " abst."));
-    msg.remove(msg.length() - 1);  // letzter Zeilenumbruch, sonst Leerzeile im Block
-    return msg + "</pre>";
-}
-
-static String buildSunMessage() {
-    struct tm utc;
-    if (!currentUtc(utc)) return "Keine gültige Uhrzeit (NTP) verfügbar.";
-    SkyState sky = computeSky(utc);
-
-    String msg = "☀️ Sonne – " + formatNow() + "\n\n";
-    msg += "RA / Dek: " + formatRa(sky.sunRaDek.ra) + " / " + formatDeg(sky.sunRaDek.dec) + "\n";
-    msg += "Azimut / Höhe: " + formatAzimut(sky.sunAzH.azimuth) + " / " + formatDeg(sky.sunAzH.altitude);
-    return msg;
-}
-
-static String buildConfigMessage() {
-    char buf[96];
-    String msg = "⚙️ Konfiguration\n\n";
-    snprintf(buf, sizeof(buf), "Standort: %.6f / %.6f, %.0f m\n",
-             configLocation.latitude.deg(), configLocation.longitude.deg(),
-             configLocation.elevation);
-    msg += buf;
-    snprintf(buf, sizeof(buf), "Optionen: %d\n", configDisplayOptions);
-    msg += buf;
-    snprintf(buf, sizeof(buf), "  [%c] Unbeleuchtete Seite abdunkeln (1)\n", (configDisplayOptions & 1) ? 'x' : ' ');
-    msg += buf;
-    snprintf(buf, sizeof(buf), "  [%c] Bläuliche Tönung (2)\n", (configDisplayOptions & 2) ? 'x' : ' ');
-    msg += buf;
-    snprintf(buf, sizeof(buf), "  [%c] NASA-Textur (4)\n", (configDisplayOptions & 4) ? 'x' : ' ');
-    msg += buf;
-    snprintf(buf, sizeof(buf), "  [%c] Libration (8)\n", (configDisplayOptions & 8) ? 'x' : ' ');
-    msg += buf;
-    snprintf(buf, sizeof(buf), "  [%c] Ohne parallaktischen Winkel (16)\n", (configDisplayOptions & 16) ? 'x' : ' ');
-    msg += buf;
-    snprintf(buf, sizeof(buf), "  [%c] Ohne Positionswinkel (32)\n", (configDisplayOptions & 32) ? 'x' : ' ');
-    msg += buf;
-    snprintf(buf, sizeof(buf), "Auto-Modus: %s, täglich um %02d:%02d\n",
-             configAutoMode ? "an" : "aus", configAutoTime / 60, configAutoTime % 60);
-    msg += buf;
-    msg += String("Gruppe: ") + (groupEnabled() ? TELEGRAM_GROUP_ID : "nicht konfiguriert") + "\n";
-    msg += String("Pushover: ") + (pushoverEnabled() ? "an" : "nicht konfiguriert") + "\n";
-    msg += "Zeitzone: " + String(configLocation.timezone) + "\n";
-    msg += String("Anzeige: ") + displayModeName() + "\n";
-    msg += "Lokalzeit: " + formatNow();
-    return msg;
-}
-
-static const char HELP_TEXT[] =
-    "🌙 Mond-Display\n\n"
-    "/mond – aktuelle Mondkoordinaten\n"
-    "/bild – aktuelles Mondbild\n"
-    "/profilbild – Profil- und Gruppenbild jetzt aktualisieren\n"
-    "/sonne – aktuelle Sonnenkoordinaten\n"
-    "/bericht – Tagesbericht jetzt senden (auch an Pushover)\n"
-    "/config – aktuelle Einstellungen\n"
-    "/standort <lat> <lon> [höhe] – Standort in Dezimalgrad, Höhe in m\n"
-    "/optionen <wert> – Darstellung (Bits: 1=abdunkeln, 2=bläulich, 4=NASA-Textur, 8=Libration, 16=ohne parallakt. Winkel, 32=ohne Positionswinkel)\n"
-    "/auto on|off – täglichen Bericht ein/aus\n"
-    "/autozeit HH:MM – Uhrzeit des Berichts (Lokalzeit)\n"
-    "/zeitzone <POSIX-TZ> – z. B. CET-1CEST,M3.5.0,M10.5.0/3\n"
-    "/modus mond|uhr – Anzeige: Mond oder 24h-Uhr\n\n"
-    "Bericht: ▁…▇ Höchststand des Mondes, ⇡⇣ morgen höher/tiefer, "
-    "🌕🔴 Mondfinsternis (✗ hier nicht sichtbar), ☀🌑 Sonnenfinsternis, 🌕＋/🌕－ Super-/Minimond";
-
-static const char BOT_COMMANDS[] =
-    "["
-    "{\"command\":\"mond\",\"description\":\"Aktuelle Mondkoordinaten\"},"
-    "{\"command\":\"bild\",\"description\":\"Aktuelles Mondbild\"},"
-    "{\"command\":\"profilbild\",\"description\":\"Profil- und Gruppenbild aktualisieren\"},"
-    "{\"command\":\"sonne\",\"description\":\"Aktuelle Sonnenkoordinaten\"},"
-    "{\"command\":\"bericht\",\"description\":\"Tagesbericht jetzt senden\"},"
-    "{\"command\":\"config\",\"description\":\"Aktuelle Einstellungen\"},"
-    "{\"command\":\"standort\",\"description\":\"Standort setzen: <lat> <lon> [höhe]\"},"
-    "{\"command\":\"optionen\",\"description\":\"Darstellungsoptionen setzen: <wert>\"},"
-    "{\"command\":\"auto\",\"description\":\"Täglichen Bericht ein/aus: on|off\"},"
-    "{\"command\":\"autozeit\",\"description\":\"Uhrzeit des Berichts: HH:MM\"},"
-    "{\"command\":\"zeitzone\",\"description\":\"Zeitzone (POSIX-TZ) setzen\"},"
-    "{\"command\":\"modus\",\"description\":\"Anzeige: mond|uhr\"},"
-    "{\"command\":\"hilfe\",\"description\":\"Befehlsübersicht\"}"
-    "]";
 
 // ── Mondbild ─────────────────────────────────────────────────────────────────
 
@@ -450,37 +112,61 @@ static uint16_t photoPixel(int x, int y) {
     return moonPixel(x - MOON_RADIUS_PX, y - MOON_RADIUS_PX);
 }
 
-// Rendert den Mond für die aktuelle Zeit und sendet ihn als PNG.
-// Das Bild wird zeilenweise während des Uploads berechnet (kein Bildpuffer nötig).
-static void sendMoonPhoto(const String& chatId) {
-    struct tm utc;
-    if (!currentUtc(utc)) {
-        bot.sendMessage(chatId, "Keine gültige Uhrzeit (NTP) verfügbar.", "");
-        return;
-    }
-    SkyState sky = computeSky(utc);
-
+// Sendet das mit pngStreamBegin() begonnene Bild. Die Zeilen werden erst während des Uploads
+// berechnet (kein Bildpuffer nötig). Meldet einen Fehler auch im Chat.
+static bool sendPngStream(const String& chatId, const char* what) {
     const unsigned long start = millis();
-    prepareMoonRenderAt(utc);
-    pngStreamBegin(2 * MOON_RADIUS_PX, 2 * MOON_RADIUS_PX, photoPixel);
-
     // Telegram braucht für das Verarbeiten des Bildes länger als die Standard-Wartezeit
     const unsigned int wait = bot.waitForResponse;
     bot.waitForResponse = 15000;
     String response = bot.sendPhotoByBinary(chatId, "image/png", pngStreamSize(),
                                             photoMoreData, nullptr, photoBuffer, photoBufferLen);
     bot.waitForResponse = wait;
-    Serial.printf("Telegram: Bild (%u Byte) in %lu ms gesendet.\n", (unsigned) pngStreamSize(), millis() - start);
+    Serial.printf("Telegram: %s (%u Byte) in %lu ms gesendet.\n", what, (unsigned) pngStreamSize(), millis() - start);
 
     if (response.indexOf("\"ok\":true") < 0) {
         Serial.println("Telegram: Antwort auf Bild: " + response);
-        bot.sendMessage(chatId, "Das Bild konnte nicht gesendet werden.", "");
+        bot.sendMessage(chatId, tr(Txt::ImageFailed), "");
+        return false;
+    }
+    return true;
+}
+
+// Rendert den Mond für die aktuelle Zeit und sendet ihn als PNG.
+void sendMoonPhoto(const String& chatId) {
+    struct tm utc;
+    if (!currentUtc(utc)) {
+        bot.sendMessage(chatId, tr(Txt::NoValidTime), "");
         return;
     }
-    char buf[64];
-    snprintf(buf, sizeof(buf), "%s %s, %.0f %% beleuchtet – ",
-             moonPhaseEmoji(sky.phase, sky.waxing), moonPhaseName(sky.phase, sky.waxing), sky.phase * 100.0);
-    bot.sendMessage(chatId, String(buf) + formatNow(), "");
+    SkyState sky = computeSky(utc);
+
+    prepareMoonRenderAt(utc);
+    pngStreamBegin(2 * MOON_RADIUS_PX, 2 * MOON_RADIUS_PX, photoPixel);
+    if (!sendPngStream(chatId, "Mondbild")) return;
+
+    bot.sendMessage(chatId, textf(Txt::ImageCaptionFmt, moonPhaseEmoji(sky.phase, sky.waxing),
+                                  moonPhaseName(moonPhaseOf(sky.phase, sky.waxing)), sky.phase * 100.0,
+                                  formatNow().c_str()), "");
+}
+
+// Zeichnet die 24h-Uhr für die aktuelle Zeit, unabhängig vom Anzeigemodus, und sendet sie als PNG.
+void sendClockPhoto(const String& chatId) {
+    const time_t now = time(nullptr);
+    if (now < MIN_VALID_TIME) {
+        bot.sendMessage(chatId, tr(Txt::NoValidTime), "");
+        return;
+    }
+    const unsigned long start = millis();
+    if (!clockImageBegin(now)) {
+        Serial.println("Telegram: kein Speicher für das Bild der Uhr.");
+        bot.sendMessage(chatId, tr(Txt::ClockNoMemory), "");
+        return;
+    }
+    Serial.printf("Telegram: Uhr gezeichnet (%lu ms)\n", millis() - start);
+    pngStreamBegin(CLOCK_IMAGE_SIZE, CLOCK_IMAGE_SIZE, clockImagePixel);
+    sendPngStream(chatId, "Bild der Uhr");
+    clockImageEnd();
 }
 
 // ── Profilbild ───────────────────────────────────────────────────────────────
@@ -608,6 +294,18 @@ static int updateMoonPhotos(int targets) {
     return done;
 }
 
+// Für den Befehl avatar: setzt Profil- und Gruppenbild sofort und meldet das Ergebnis.
+String refreshMoonPhotos() {
+    const int targets = PHOTO_PROFILE | (groupEnabled() ? PHOTO_GROUP : 0);
+    const int done = updateMoonPhotos(targets);
+    String msg = tr((done & PHOTO_PROFILE) ? Txt::ProfilePhotoSet : Txt::ProfilePhotoFailed);
+    if (groupEnabled()) {
+        msg += "\n";
+        msg += tr((done & PHOTO_GROUP) ? Txt::GroupPhotoSet : Txt::GroupPhotoFailed);
+    }
+    return msg;
+}
+
 // Aktualisiert Profil- und Gruppenbild nach dem Start und danach täglich zur Berichtszeit.
 // Ein fehlgeschlagenes Ziel wird allein wiederholt, damit die Gruppe keine doppelte
 // Meldung über ein neues Gruppenbild bekommt.
@@ -702,143 +400,23 @@ static void checkAutoReport() {
 
 // ── Befehle ──────────────────────────────────────────────────────────────────
 
-static String handleCommand(String text, const String& chatId) {
+// Führt einen Befehl aus der Tabelle in Commands.ino aus. In Gruppen kann ein Befehl an einen
+// bestimmten Bot gerichtet sein ("/befehl@BotName"); Befehle an andere Bots werden ignoriert.
+static void handleCommand(String text, const String& chatId) {
     text.trim();
-    int space = text.indexOf(' ');
-    String cmd  = (space < 0) ? text : text.substring(0, space);
-    String args = (space < 0) ? String("") : text.substring(space + 1);
-    args.trim();
-    // "/befehl@BotName" in Gruppen; Befehle an andere Bots ignorieren
-    int at = cmd.indexOf('@');
+    const int space = text.indexOf(' ');
+    String cmd = (space < 0) ? text : text.substring(0, space);
+    const String rest = (space < 0) ? String() : text.substring(space);
+    const int at = cmd.indexOf('@');
     if (at >= 0) {
-        String target = cmd.substring(at + 1);
+        const String target = cmd.substring(at + 1);
         cmd = cmd.substring(0, at);
-        if (bot.userName.length() > 0 && !target.equalsIgnoreCase(bot.userName)) return "";
+        if (bot.userName.length() > 0 && !target.equalsIgnoreCase(bot.userName)) return;
     }
-    cmd.toLowerCase();
-
-    if (cmd == "/start" || cmd == "/hilfe" || cmd == "/help") {
-        return HELP_TEXT;
+    const Reply reply = runCommand(CH_TELEGRAM, cmd + rest, chatId);
+    if (reply.text.length() > 0) {
+        bot.sendMessage(chatId, reply.text, reply.html ? "HTML" : "");
     }
-    if (cmd == "/mond") {
-        bot.sendMessage(chatId, buildMoonMessage(), "HTML");
-        return "";  // Antwort wurde bereits gesendet (HTML wegen des Festbreiten-Blocks)
-    }
-    if (cmd == "/bild") {
-        sendMoonPhoto(chatId);
-        return "";  // Antwort wurde bereits gesendet
-    }
-    if (cmd == "/profilbild") {
-        const int targets = PHOTO_PROFILE | (groupEnabled() ? PHOTO_GROUP : 0);
-        const int done = updateMoonPhotos(targets);
-        if (done == targets) return groupEnabled() ? "Profil- und Gruppenbild aktualisiert." : "Profilbild aktualisiert.";
-        String msg = (done & PHOTO_PROFILE) ? "Profilbild aktualisiert." : "Das Profilbild konnte nicht gesetzt werden.";
-        if (groupEnabled()) {
-            msg += (done & PHOTO_GROUP) ? "\nGruppenbild aktualisiert."
-                                        : "\nDas Gruppenbild konnte nicht gesetzt werden (Bot Admin mit \"Gruppeninfo ändern\"?).";
-        }
-        return msg;
-    }
-    if (cmd == "/sonne") {
-        return buildSunMessage();
-    }
-    if (cmd == "/bericht") {
-        String report = buildDailyReport();
-        if (pushoverEnabled() && !sendPushover(report, "")) {
-            bot.sendMessage(chatId, "Pushover: Bericht konnte nicht gesendet werden.", "");
-        }
-        return report;
-    }
-    if (cmd == "/config") {
-        return buildConfigMessage();
-    }
-    if (cmd == "/standort") {
-        const char* s = args.c_str();
-        char* endLat = nullptr;
-        char* endLon = nullptr;
-        char* endElev = nullptr;
-        double lat = strtod(s, &endLat);
-        double lon = strtod(endLat, &endLon);
-        double elev = strtod(endLon, &endElev);  // optional, ohne Angabe 0 m
-        if (endElev == endLon) elev = 0.0;
-        if (endLat == s || endLon == endLat || lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0
-            || elev < -500.0 || elev > 9000.0) {
-            return "Ungültige Werte. Erwartet: /standort <lat> <lon> [höhe]\nLat: -90..90, Lon: -180..180, Höhe: -500..9000 m";
-        }
-        configLocation.latitude  = astro::Angle::fromDeg(lat);
-        configLocation.longitude = astro::Angle::fromDeg(lon);
-        configLocation.elevation = elev;
-        saveConfig();
-        requestRedraw();
-        char buf[80];
-        snprintf(buf, sizeof(buf), "Standort gespeichert: %.6f / %.6f, %.0f m", lat, lon, elev);
-        return buf;
-    }
-    if (cmd == "/optionen") {
-        const char* s = args.c_str();
-        char* end = nullptr;
-        long value = strtol(s, &end, 0);
-        if (end == s || value < 0 || value > 0x7FFFFFFF) {
-            return "Ungültiger Wert. Erwartet: /optionen <wert>";
-        }
-        configDisplayOptions = (int) value;
-        saveConfig();
-        requestRedraw();
-        return "Display-Optionen gespeichert: " + String(configDisplayOptions);
-    }
-    if (cmd == "/auto") {
-        args.toLowerCase();
-        if (args == "on" || args == "an") {
-            configAutoMode = true;
-        } else if (args == "off" || args == "aus") {
-            configAutoMode = false;
-        } else {
-            return String("Auto-Modus ist ") + (configAutoMode ? "an" : "aus") + ". Erwartet: /auto on|off";
-        }
-        saveConfig();
-        resetAutoReportDay();
-        char buf[64];
-        snprintf(buf, sizeof(buf), "Auto-Modus %s (täglich um %02d:%02d)",
-                 configAutoMode ? "an" : "aus", configAutoTime / 60, configAutoTime % 60);
-        return buf;
-    }
-    if (cmd == "/autozeit") {
-        int minutes = parseHHMM(args.c_str());
-        if (minutes < 0) {
-            return "Ungültiges Format. Erwartet: /autozeit HH:MM";
-        }
-        configAutoTime = minutes;
-        saveConfig();
-        resetAutoReportDay();
-        char buf[48];
-        snprintf(buf, sizeof(buf), "Berichtszeit gespeichert: %02d:%02d", configAutoTime / 60, configAutoTime % 60);
-        return buf;
-    }
-    if (cmd == "/modus") {
-        args.toLowerCase();
-        if (args == "mond") {
-            setDisplayMode(DISPLAY_MODE_MOON);
-        } else if (args == "uhr") {
-            setDisplayMode(DISPLAY_MODE_CLOCK);
-        } else {
-            return String("Anzeige: ") + displayModeName() + ". Erwartet: /modus mond|uhr";
-        }
-        return String("Anzeige: ") + displayModeName();
-    }
-    if (cmd == "/zeitzone") {
-        if (args.length() == 0) {
-            return "Zeitzone: " + String(configLocation.timezone) + "\nErwartet: /zeitzone <POSIX-TZ>, z. B. CET-1CEST,M3.5.0,M10.5.0/3";
-        }
-        if (!isValidTimezone(args.c_str())) {
-            return "Ungültige Zeitzone. Beispiel: CET-1CEST,M3.5.0,M10.5.0/3";
-        }
-        strlcpy(configLocation.timezone, args.c_str(), sizeof(configLocation.timezone));
-        saveConfig();
-        resetAutoReportDay();
-        requestRedraw();
-        return "Zeitzone gespeichert: " + String(configLocation.timezone) + "\nLokalzeit: " + formatNow();
-    }
-    return "Unbekannter Befehl. /hilfe zeigt alle Befehle.";
 }
 
 // ── Setup & Loop ─────────────────────────────────────────────────────────────
@@ -919,7 +497,7 @@ void handleTelegram() {
     }
     if (!telegramCommandsSet) {
         // getMe (oben) liefert auch den eigenen Benutzernamen, um in Gruppen "/befehl@AndererBot" zu erkennen
-        telegramCommandsSet = bot.setMyCommands(BOT_COMMANDS);
+        telegramCommandsSet = bot.setMyCommands(buildBotCommandsJson());
         if (telegramCommandsSet) Serial.printf("Telegram bereit (@%s).\n", bot.userName.c_str());
     }
 
@@ -937,10 +515,7 @@ void handleTelegram() {
             // In der Gruppe nur auf Befehle reagieren, nicht auf normale Nachrichten
             if (isGroup && !message.text.startsWith("/")) continue;
             Serial.printf("Telegram: %s\n", message.text.c_str());
-            String reply = handleCommand(message.text, message.chat_id);
-            if (reply.length() > 0) {
-                bot.sendMessage(message.chat_id, reply, "");
-            }
+            handleCommand(message.text, message.chat_id);
         }
         count = bot.getUpdates(bot.last_message_received + 1);
     }

@@ -43,11 +43,18 @@ struct MoonOutlook {
     bool superMoon, miniMoon;
 };
 
+// Mondphase für Name und Symbol. Die Reihenfolge entspricht den Texten PhaseNew … PhaseWaningCrescent
+// in i18n_ids.h.
+enum class MoonPhase {
+    New, WaxingCrescent, FirstQuarter, WaxingGibbous, Full, WaningGibbous, LastQuarter, WaningCrescent
+};
+constexpr int MOON_PHASE_COUNT = 8;
+
 SkyState computeSky(const struct tm& utc);
 int localDayKey(const struct tm& t);
 DayEvents eventsForLocalDay(time_t t, bool withMoon);
 MoonOutlook moonOutlookFor(time_t t);
-const char* moonPhaseName(double phase, bool waxing);
+MoonPhase moonPhaseOf(double phase, bool waxing);
 const char* moonPhaseEmoji(double phase, bool waxing);
 
 #endif // EPHEMERIS_H
