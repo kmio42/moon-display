@@ -112,8 +112,9 @@ public:
         const double r = normalized().rad_;
         return Angle(r > M_PI ? r - 2 * M_PI : r);
     }
-    // Betrag (als Methode, damit abs(int) und fabs(double) in astro nicht verdeckt werden)
-    constexpr Angle abs() const { return Angle(rad_ < 0 ? -rad_ : rad_); }
+    // Betrag (als Methode, damit abs(int) und fabs(double) in astro nicht verdeckt werden).
+    // fabs löscht nur das Vorzeichenbit; ein Vergleich wäre ohne FPU ein Bibliotheksaufruf.
+    constexpr Angle abs() const { return Angle(std::fabs(rad_)); }
 
     // Umkehrfunktionen der Winkelfunktionen
     static Angle asin(const double x) { return Angle(std::asin(x)); }
