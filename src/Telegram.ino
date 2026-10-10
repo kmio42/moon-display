@@ -667,23 +667,33 @@ static void checkAutoReport() {
     int day = localDayKey(lt);
     if (minutes < configAutoTime) return;
 
-    if (telegramEnabled && day != lastReportDay) {
+    const bool chatDue     = telegramEnabled && day != lastReportDay;
+    const bool groupDue    = telegramEnabled && groupEnabled() && day != lastGroupReportDay;
+    const bool pushoverDue = pushoverEnabled() && day != lastPushoverDay
+                             && (lastPushoverAttempt == 0 || millis() - lastPushoverAttempt >= PUSHOVER_RETRY_INTERVAL);
+    if (!chatDue && !groupDue && !pushoverDue) return;
+
+    // Einmal berechnen (ca. 1–2 s) und an alle fälligen Ziele senden
+    const unsigned long start = millis();
+    const String report = buildDailyReport();
+    Serial.printf("Tagesbericht erstellt (%lu ms)\n", millis() - start);
+
+    if (chatDue) {
         Serial.println("Telegram: sende Tagesbericht...");
-        if (bot.sendMessage(TELEGRAM_CHAT_ID, buildDailyReport(), "")) {
+        if (bot.sendMessage(TELEGRAM_CHAT_ID, report, "")) {
             lastReportDay = day;
         }
     }
-    if (telegramEnabled && groupEnabled() && day != lastGroupReportDay) {
+    if (groupDue) {
         Serial.println("Telegram: sende Tagesbericht in die Gruppe...");
-        if (bot.sendMessage(TELEGRAM_GROUP_ID, buildDailyReport(), "")) {
+        if (bot.sendMessage(TELEGRAM_GROUP_ID, report, "")) {
             lastGroupReportDay = day;
         }
     }
-    if (pushoverEnabled() && day != lastPushoverDay
-        && (lastPushoverAttempt == 0 || millis() - lastPushoverAttempt >= PUSHOVER_RETRY_INTERVAL)) {
+    if (pushoverDue) {
         Serial.println("Pushover: sende Tagesbericht...");
         lastPushoverAttempt = millis();
-        if (sendPushover(buildDailyReport(), "")) {
+        if (sendPushover(report, "")) {
             lastPushoverDay = day;
             lastPushoverAttempt = 0;
         }
