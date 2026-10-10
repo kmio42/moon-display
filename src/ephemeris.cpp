@@ -24,8 +24,6 @@ time_t timeFromJulianDate(double jd) {
 
 SkyState computeSky(const struct tm& utc) {
     SkyState s;
-    const double latitude = configLocation.latitude;
-
     s.jd = julianDateFromTm(utc);
 
     // Lokale Sternzeit in Radiant (GMST + Längengrad-Offset)
@@ -36,15 +34,15 @@ SkyState computeSky(const struct tm& utc) {
     const double eps = astro::calculateObliquity(s.jd);
     s.sun      = astro::calculateSunPosition(s.jd);
     s.sunRaDek = astro::calculateEquatorial(s.sun, eps);
-    s.sunAzH   = astro::calculateHorizontal(s.sunRaDek, s.siderealTime, latitude);
+    s.sunAzH   = astro::calculateHorizontal(s.sunRaDek, s.siderealTime, configLocation);
 
     // ── Mondposition ─────────────────────────────────────────────────────────
     s.moon = astro::calculateMoonPosition(s.jd);
     s.moonRaDek = astro::calculateEquatorial(s.moon, eps);
     // Äquatoriale Horizontalparallaxe [rad], Kapitel 45
     const double moonParallax = asin(astro::EARTH_RADIUS / s.moon.distance);
-    s.moonRaDek = astro::calculateTopocentric(s.moonRaDek, moonParallax, s.siderealTime, latitude);
-    s.moonAzH   = astro::calculateHorizontal(s.moonRaDek, s.siderealTime, latitude);
+    s.moonRaDek = astro::calculateTopocentric(s.moonRaDek, moonParallax, s.siderealTime, configLocation);
+    s.moonAzH   = astro::calculateHorizontal(s.moonRaDek, s.siderealTime, configLocation);
 
     // ── Mondachse & Libration ────────────────────────────────────────────────
     s.moonAxle = astro::calculateMoonOrientation(s.jd, s.moon);
@@ -61,7 +59,7 @@ SkyState computeSky(const struct tm& utc) {
                 - cos(s.sunRaDek.dec) * sin(s.moonRaDek.dec) * cos(s.sunRaDek.ra - s.moonRaDek.ra));
 
     // Parallaktischer Winkel für Mond (ortsabhängig)
-    s.q = astro::calculateParallacticAngle(s.moonRaDek, s.siderealTime, latitude);
+    s.q = astro::calculateParallacticAngle(s.moonRaDek, s.siderealTime, configLocation);
 
     return s;
 }

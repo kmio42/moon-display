@@ -263,10 +263,11 @@ Equatorial calculateEquatorial(const Ecliptic& ecliptic, const double eps) {
  * Äquatoriale in horizontale Koordinaten, Formeln 12.5 und 12.6.
  * @param equ Rektaszension und Deklination [rad]
  * @param localSiderealTime Lokale Sternzeit θ [rad]
- * @param latitude Geographische Breite φ [rad]
+ * @param location Beobachtungsort; benötigt wird nur die Breite φ, die Länge steckt bereits in θ
  * @return Azimut A (von Süden über Westen) und Höhe h [rad]
  */
-Horizontal calculateHorizontal(const Equatorial& equ, const double localSiderealTime, const double latitude) {
+Horizontal calculateHorizontal(const Equatorial& equ, const double localSiderealTime, const GeoLocation& location) {
+    const double latitude = location.latitude;
     // Lokaler Stundenwinkel H = θ − α
     const double H = localSiderealTime - equ.ra;
     return {
@@ -279,10 +280,11 @@ Horizontal calculateHorizontal(const Equatorial& equ, const double localSidereal
  * Parallaktischer Winkel q, Formel 13.1.
  * @param equ Rektaszension und Deklination [rad]
  * @param localSiderealTime Lokale Sternzeit θ [rad]
- * @param latitude Geographische Breite φ [rad]
+ * @param location Beobachtungsort; benötigt wird nur die Breite φ, die Länge steckt bereits in θ
  * @return q [rad], vor dem Meridiandurchgang negativ
  */
-double calculateParallacticAngle(const Equatorial& equ, const double localSiderealTime, const double latitude) {
+double calculateParallacticAngle(const Equatorial& equ, const double localSiderealTime, const GeoLocation& location) {
+    const double latitude = location.latitude;
     const double H = localSiderealTime - equ.ra;
     return atan2(sin(H), tan(latitude) * cos(equ.dec) - sin(equ.dec) * cos(H));
 }
@@ -293,10 +295,12 @@ double calculateParallacticAngle(const Equatorial& equ, const double localSidere
  * @param equ Geozentrische Rektaszension und Deklination [rad]
  * @param parallax Äquatoriale Horizontalparallaxe π [rad]
  * @param localSiderealTime Lokale Sternzeit θ [rad]
- * @param latitude Geographische Breite φ [rad]
+ * @param location Beobachtungsort; benötigt wird nur die Breite φ, die Länge steckt bereits in θ
  * @return Topozentrische Rektaszension und Deklination [rad]
  */
-Equatorial calculateTopocentric(const Equatorial& equ, const double parallax, const double localSiderealTime, const double latitude) {
+Equatorial calculateTopocentric(const Equatorial& equ, const double parallax, const double localSiderealTime,
+                                const GeoLocation& location) {
+    const double latitude = location.latitude;
     // Kapitel 10: b/a des Erdellipsoids [1] und Höhe über dem Meeresspiegel [m]
     constexpr double ba = 0.99664719;
     constexpr double height = 0;
@@ -1085,7 +1089,7 @@ MoonSample sampleMoon(const double jd, const GeoLocation& location) {
     const Ecliptic moon = calculateMoonPosition(jd);
     const Equatorial equ = calculateEquatorial(moon, calculateObliquity(jd));
     const double siderealTime = calculateLocalSiderealTime(jd, location);
-    const Horizontal azh = calculateHorizontal(equ, siderealTime, location.latitude);
+    const Horizontal azh = calculateHorizontal(equ, siderealTime, location);
 
     // Standardhöhe des Mondes h0 = 0.7275·π − 0°34′ (Kapitel 14) für die geozentrische Position;
     // berücksichtigt Horizontalparallaxe π, Halbmesser und Refraktion.

@@ -177,11 +177,13 @@ double calculateEarthTrueAnomaly(double jd);            // Wahre Anomalie der Er
 double calculateEarthEccentricity(double jd);           // Exzentrizität der Erdbahn [1]
 double calculateEquationOfTime(double jd, bool withEarthTilt);  // Zeitgleichung [min]
 
-// Koordinatentransformation (Winkel [rad], Sternzeit als lokale Sternzeit θ [rad])
+// Koordinatentransformation (Winkel [rad], Sternzeit als lokale Sternzeit θ [rad]);
+// vom Beobachtungsort wird nur die Breite benötigt
 Equatorial calculateEquatorial(const Ecliptic& ecliptic, double eps);
-Horizontal calculateHorizontal(const Equatorial& equ, double localSiderealTime, double latitude);
-double calculateParallacticAngle(const Equatorial& equ, double localSiderealTime, double latitude);
-Equatorial calculateTopocentric(const Equatorial& equ, double parallax, double localSiderealTime, double latitude);
+Horizontal calculateHorizontal(const Equatorial& equ, double localSiderealTime, const GeoLocation& location);
+double calculateParallacticAngle(const Equatorial& equ, double localSiderealTime, const GeoLocation& location);
+Equatorial calculateTopocentric(const Equatorial& equ, double parallax, double localSiderealTime,
+                                const GeoLocation& location);
 
 // Interpolation
 double interpolate(double y1, double y2, double y3, double n);
