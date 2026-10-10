@@ -40,4 +40,19 @@ void drawClockFace(ClockDisplay* gfx, time_t now);
 // Erzwingt Neuberechnung und komplettes Neuzeichnen (z. B. nach Standort- oder Zeitzonenwechsel).
 void clockFaceInvalidate();
 
+// Bild der Uhr unabhängig vom Display (für Telegram), CLOCK_IMAGE_SIZE Pixel breit und hoch.
+// Der Zeichenzustand des Displays bleibt unberührt.
+constexpr int CLOCK_IMAGE_SIZE = 240;
+
+// Zeichnet die Uhr für den Zeitpunkt now (UTC) komplett in einen Puffer mit 16 Farben (28,8 KB)
+// und bereitet das Mondsymbol vor. false, wenn der Speicher fehlt.
+bool clockImageBegin(time_t now);
+
+// Farbe (RGB565) des Pixels (x, y), x und y in [0, CLOCK_IMAGE_SIZE). Das Mondsymbol wird erst hier
+// berechnet; dazwischen darf kein anderes prepareMoonRender…() laufen.
+uint16_t clockImagePixel(int x, int y);
+
+// Gibt den Puffer frei.
+void clockImageEnd();
+
 #endif // CLOCK_FACE_H

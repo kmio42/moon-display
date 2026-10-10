@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <math.h>
+#include <new>
+#include <string.h>
 #include <Fonts/FreeSansBold9pt7b.h>
 
 #include "ephemeris.h"
@@ -246,30 +248,39 @@ bool sameData(const ClockData& a, const ClockData& b) {
         && a.dashed == b.dashed && a.dashedDayOffset == b.dashedDayOffset;
 }
 
+// Verkleinerung des Mondbildes auf das Mondsymbol; je Pixel Mittelwert aus 2×2 Abtastpunkten.
+// Abtastpunkt im Mondbild für die Koordinate p des Mondsymbols (relativ zur Mitte) mit Versatz 0,25 bzw. 0,75.
+int moonSample(int p, float offset) {
+    constexpr float SCALE = (float) MOON_RADIUS_PX / MOON_SYMBOL_RADIUS;
+    return (int) floorf((p + offset) * SCALE);
+}
+
+// Gehört der Pixel (x, y) relativ zur Mitte zum Mondsymbol?
+bool inMoonSymbol(int x, int y) {
+    return y >= -MOON_SYMBOL_RADIUS && y < MOON_SYMBOL_RADIUS && x < MOON_SYMBOL_RADIUS
+        && x * x + y * y <= MOON_SYMBOL_RADIUS * MOON_SYMBOL_RADIUS;
+}
+
 // Zeichnet die Pixel zeilenweise in einem Block (setAddrWindow + writePixels) statt einzeln mit drawPixel.
 void drawMoonSymbol(ClockDisplay* tft, time_t now) {
     struct tm utc;
     gmtime_r(&now, &utc);
     prepareMoonRenderAt(utc);
 
-    // Verkleinerung des Mondbildes; je Pixel Mittelwert aus 2×2 Abtastpunkten
-    const float scale = (float) MOON_RADIUS_PX / MOON_SYMBOL_RADIUS;
     const int16_t cx = lroundf(CX);
     const int16_t cy = lroundf(CY);
     constexpr int R2 = MOON_SYMBOL_RADIUS * MOON_SYMBOL_RADIUS;
     uint16_t row[2 * MOON_SYMBOL_RADIUS];
     for (int y = -MOON_SYMBOL_RADIUS; y < MOON_SYMBOL_RADIUS; y++) {
-        const int y0 = (int) floorf((y + 0.25f) * scale);
-        const int y1 = (int) floorf((y + 0.75f) * scale);
-        // Pixel dieser Zeile innerhalb des Kreises: −half..half (und < MOON_SYMBOL_RADIUS)
+        const int y0 = moonSample(y, 0.25f);
+        const int y1 = moonSample(y, 0.75f);
+        // Pixel dieser Zeile innerhalb des Kreises: −half..half (und < MOON_SYMBOL_RADIUS), wie inMoonSymbol()
         int half = 0;
         while ((half + 1) * (half + 1) + y * y <= R2) half++;
         const int xStart = -half;
         const int xEnd = std::min(half, MOON_SYMBOL_RADIUS - 1);
         for (int x = xStart; x <= xEnd; x++) {
-            const int x0 = (int) floorf((x + 0.25f) * scale);
-            const int x1 = (int) floorf((x + 0.75f) * scale);
-            row[x - xStart] = moonPixelAveraged(x0, y0, x1, y1);
+            row[x - xStart] = moonPixelAveraged(moonSample(x, 0.25f), y0, moonSample(x, 0.75f), y1);
         }
         // Außerhalb des Kreises bleibt der Hintergrund (Zeiger, Striche) unverändert
         tft->drawRGBBitmap(cx + xStart, cy + y, row, xEnd - xStart + 1, 1);
@@ -377,6 +388,61 @@ void drawNowHand(Adafruit_GFX* gfx, float hours, uint16_t color) {
     radialLine(gfx, hours, HAND_START, RED_HAND_END, 4.0f, color);
 }
 
+// ── Bild ohne Display ────────────────────────────────────────────────────────
+
+// Zeichenfläche mit 4 Bit je Pixel für das Bild der Uhr. Die Palette füllt sich beim Zeichnen;
+// die Uhr verwendet weniger als 16 Farben, jede weitere würde als erste Farbe gespeichert.
+class PaletteCanvas : public Adafruit_GFX {
+public:
+    static constexpr size_t BYTES = CLOCK_IMAGE_SIZE * CLOCK_IMAGE_SIZE / 2;
+
+    PaletteCanvas() : Adafruit_GFX(CLOCK_IMAGE_SIZE, CLOCK_IMAGE_SIZE) {}
+
+    bool allocate() {
+        release();
+        pixels = new (std::nothrow) uint8_t[BYTES];
+        colors = 0;
+        return pixels != nullptr;
+    }
+
+    void release() {
+        delete[] pixels;
+        pixels = nullptr;
+    }
+
+    void drawPixel(int16_t x, int16_t y, uint16_t color) override {
+        if (x < 0 || y < 0 || x >= CLOCK_IMAGE_SIZE || y >= CLOCK_IMAGE_SIZE) return;
+        const uint8_t index = indexOf(color);
+        uint8_t& pair = pixels[(y * CLOCK_IMAGE_SIZE + x) / 2];
+        pair = (x & 1) ? (pair & 0xF0) | index : (pair & 0x0F) | (index << 4);
+    }
+
+    void fillScreen(uint16_t color) override {
+        memset(pixels, indexOf(color) * 0x11, BYTES);
+    }
+
+    uint16_t pixel(int x, int y) const {
+        const uint8_t pair = pixels[(y * CLOCK_IMAGE_SIZE + x) / 2];
+        return palette[(x & 1) ? (pair & 0x0F) : (pair >> 4)];
+    }
+
+private:
+    uint8_t* pixels = nullptr;
+    uint16_t palette[16];
+    int colors = 0;
+
+    uint8_t indexOf(uint16_t color) {
+        for (int i = 0; i < colors; i++) {
+            if (palette[i] == color) return i;
+        }
+        if (colors == 16) return 0;
+        palette[colors] = color;
+        return colors++;
+    }
+};
+
+PaletteCanvas image;
+
 } // namespace
 
 ClockData computeClockData(time_t now) {
@@ -465,4 +531,34 @@ void clockFaceInvalidate() {
     needsFullRedraw = true;
     cache.day = -1;
     lastNowHours = -1.0f;
+}
+
+bool clockImageBegin(time_t now) {
+    if (!image.allocate()) return false;
+    // Wie das komplette Neuzeichnen in drawClockFace(), das Mondsymbol folgt in clockImagePixel()
+    const ClockData d = computeClockData(now);
+    image.fillScreen(COLOR_BLACK);
+    drawOuterDial(&image, d);
+    drawInnerDial(&image, d, -1.0f);
+    drawNowHand(&image, localHours(now), COLOR_NOW);
+
+    struct tm utc;
+    gmtime_r(&now, &utc);
+    prepareMoonRenderAt(utc);
+    return true;
+}
+
+uint16_t clockImagePixel(int x, int y) {
+    // Das Mondsymbol überschneidet sich mit keinem anderen Element
+    const int mx = x - lroundf(CX);
+    const int my = y - lroundf(CY);
+    if (inMoonSymbol(mx, my)) {
+        return moonPixelAveraged(moonSample(mx, 0.25f), moonSample(my, 0.25f),
+                                 moonSample(mx, 0.75f), moonSample(my, 0.75f));
+    }
+    return image.pixel(x, y);
+}
+
+void clockImageEnd() {
+    image.release();
 }
