@@ -14,10 +14,7 @@ double julianDateFromTm(const struct tm& utc) {
         utc.tm_year + 1900,
         utc.tm_mon  + 1,
         utc.tm_mday,
-        utc.tm_hour,
-        utc.tm_min,
-        utc.tm_sec,
-        0
+        utc.tm_hour + utc.tm_min / 60.0 + utc.tm_sec / 3600.0
     );
 }
 

@@ -78,9 +78,10 @@ void berechneSonnenaufgang() {
     double jd = astro::calculateJulianDate(
         zeitInfo.tm_year + 1900,
         zeitInfo.tm_mon  + 1,
-        zeitInfo.tm_mday);
+        zeitInfo.tm_mday,
+        0.0);
 
-    astro::SunriseSunset s = astro::calculateSunriseSunset(jd, configLatitude, configLongitude);
+    astro::SunriseSunset s = astro::calculateSunriseSunset(jd, configLatitude * astro::DEG2RAD, configLongitude * astro::DEG2RAD);
 
     if (!s.valid) {
         Serial.println("  Sonnenauf/-untergang: Polartag oder Polarnacht.");
