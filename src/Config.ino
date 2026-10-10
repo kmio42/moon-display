@@ -8,11 +8,12 @@
 
 // Persistente Konfiguration (RAM-Kopie der NVS-Werte).
 // Defaults werden verwendet, wenn noch nichts im Flash gespeichert wurde.
-// Standort [rad] und Zeitzone als POSIX-TZ-String; die Zeitzone wird nur für die Ausgabe
-// verwendet (System läuft in UTC). Im Flash stehen Länge und Breite in Grad.
+// Standort (Länge, Breite [rad], Höhe [m]) und Zeitzone als POSIX-TZ-String; die Zeitzone wird nur
+// für die Ausgabe verwendet (System läuft in UTC). Im Flash stehen Länge und Breite in Grad.
 astro::GeoLocation configLocation = {
     .longitude = 9.0 * astro::DEG2RAD,
     .latitude  = 51.0 * astro::DEG2RAD,
+    .elevation = 0.0,
     .timezone  = "CET-1CEST,M3.5.0,M10.5.0/3",
 };
 // Default: OPTION_DARKEN_UNLIT (1) | OPTION_USE_LIBRATION (8) = 9
@@ -30,6 +31,7 @@ void loadConfig() {
     prefs.begin(PREFS_NAMESPACE, true);
     configLocation.latitude  = prefs.getDouble("lat", configLocation.latitude  * astro::RAD2DEG) * astro::DEG2RAD;
     configLocation.longitude = prefs.getDouble("lon", configLocation.longitude * astro::RAD2DEG) * astro::DEG2RAD;
+    configLocation.elevation = prefs.getDouble("elev", configLocation.elevation);
     configDisplayOptions = prefs.getInt   ("opts",  configDisplayOptions);
     configAutoMode       = prefs.getBool  ("auto",  configAutoMode);
     configAutoTime       = prefs.getInt   ("atime", configAutoTime);
@@ -43,6 +45,7 @@ void saveConfig() {
     prefs.begin(PREFS_NAMESPACE, false);
     prefs.putDouble("lat",   configLocation.latitude  * astro::RAD2DEG);
     prefs.putDouble("lon",   configLocation.longitude * astro::RAD2DEG);
+    prefs.putDouble("elev",  configLocation.elevation);
     prefs.putInt   ("opts",  configDisplayOptions);
     prefs.putBool  ("auto",  configAutoMode);
     prefs.putInt   ("atime", configAutoTime);

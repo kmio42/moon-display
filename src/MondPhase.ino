@@ -203,23 +203,28 @@ void cmd_set_location_(SerialCommands* sender)
 {
     const char* arg0 = sender->Next();
     const char* arg1 = sender->Next();
+    const char* arg2 = sender->Next();  // optional: Höhe über dem Meeresspiegel [m]
     if (arg0 == nullptr || arg1 == nullptr) {
-        sender->GetSerial()->println("Ungültiges Format. Erwartet: set_location <lat> <lon>");
+        sender->GetSerial()->println("Ungültiges Format. Erwartet: set_location <lat> <lon> [höhe]");
         return;
     }
     char* endLat = nullptr;
     char* endLon = nullptr;
+    char* endElev = nullptr;
     double lat = strtod(arg0, &endLat);
     double lon = strtod(arg1, &endLon);
-    if (endLat == arg0 || endLon == arg1 || lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) {
-        sender->GetSerial()->println("Ungültige Werte. Lat: -90..90, Lon: -180..180");
+    double elev = (arg2 != nullptr) ? strtod(arg2, &endElev) : 0.0;
+    if (endLat == arg0 || endLon == arg1 || (arg2 != nullptr && endElev == arg2)
+        || lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0 || elev < -500.0 || elev > 9000.0) {
+        sender->GetSerial()->println("Ungültige Werte. Lat: -90..90, Lon: -180..180, Höhe: -500..9000 m");
         return;
     }
     configLocation.latitude  = lat * astro::DEG2RAD;
     configLocation.longitude = lon * astro::DEG2RAD;
+    configLocation.elevation = elev;
     saveConfig();
     requestRedraw();
-    sender->GetSerial()->printf("Standort gespeichert: %.6f / %.6f\n", lat, lon);
+    sender->GetSerial()->printf("Standort gespeichert: %.6f / %.6f, %.0f m\n", lat, lon, elev);
 }
 SerialCommand cmd_set_location("set_location", cmd_set_location_);
 
@@ -295,6 +300,7 @@ void cmd_config_(SerialCommands* sender)
     sender->GetSerial()->println("Aktuelle Konfiguration:");
     sender->GetSerial()->printf("  Latitude:  %.6f\n", configLocation.latitude * astro::RAD2DEG);
     sender->GetSerial()->printf("  Longitude: %.6f\n", configLocation.longitude * astro::RAD2DEG);
+    sender->GetSerial()->printf("  Höhe:      %.0f m\n", configLocation.elevation);
     sender->GetSerial()->printf("  Options:   %d (0x%X)\n", configDisplayOptions, configDisplayOptions);
     sender->GetSerial()->printf("    [%c] darken_unlit    (1)\n",   (configDisplayOptions & 1) ? 'x' : ' ');
     sender->GetSerial()->printf("    [%c] bluish_tint     (2)\n",   (configDisplayOptions & 2) ? 'x' : ' ');
@@ -317,7 +323,7 @@ void cmd_help(SerialCommands* sender)
   sender->GetSerial()->println("  mode moon|clock - Anzeigemodus: Mond oder 24h-Uhr (persistent)");
   sender->GetSerial()->println("  wifi [on|off] - Turn WiFi on or off");
   sender->GetSerial()->println("  set_time TT.MM.JJJJ HH:MM:SS - Set system time (UTC)");
-  sender->GetSerial()->println("  set_location <lat> <lon> - Standort persistent speichern (Dezimalgrad)");
+  sender->GetSerial()->println("  set_location <lat> <lon> [höhe] - Standort persistent speichern (Dezimalgrad, Höhe in m)");
   sender->GetSerial()->println("  set_options <wert> - Darstellungsoptionen persistent speichern (Bitfeld)");
   sender->GetSerial()->println("    Bits: 1=darken_unlit, 2=bluish_tint, 4=use_nasa_model, 8=use_libration,");
   sender->GetSerial()->println("          16=ignore_parallactic, 32=ignore_position_angle");

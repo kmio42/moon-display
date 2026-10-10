@@ -291,11 +291,11 @@ double calculateParallacticAngle(const Equatorial& equ, const double localSidere
 
 /**
  * Topozentrische aus geozentrischen äquatorialen Koordinaten, Formeln 39.2 und 39.3.
- * ρ sin φ′ und ρ cos φ′ nach Kapitel 10 für einen Beobachter auf Meereshöhe.
+ * ρ sin φ′ und ρ cos φ′ nach Kapitel 10 mit der Höhe des Beobachters über dem Meeresspiegel.
  * @param equ Geozentrische Rektaszension und Deklination [rad]
  * @param parallax Äquatoriale Horizontalparallaxe π [rad]
  * @param localSiderealTime Lokale Sternzeit θ [rad]
- * @param location Beobachtungsort; benötigt wird nur die Breite φ, die Länge steckt bereits in θ
+ * @param location Beobachtungsort; benötigt werden Breite φ und Höhe H, die Länge steckt bereits in θ
  * @return Topozentrische Rektaszension und Deklination [rad]
  */
 Equatorial calculateTopocentric(const Equatorial& equ, const double parallax, const double localSiderealTime,
@@ -303,7 +303,7 @@ Equatorial calculateTopocentric(const Equatorial& equ, const double parallax, co
     const double latitude = location.latitude;
     // Kapitel 10: b/a des Erdellipsoids [1] und Höhe über dem Meeresspiegel [m]
     constexpr double ba = 0.99664719;
-    constexpr double height = 0;
+    const double height = location.elevation;
 
     const double u = atan(ba * tan(latitude));
     const double rhoSinPhi = ba * sin(u) + height / (EARTH_RADIUS * 1000.0) * sin(latitude);
@@ -1223,7 +1223,7 @@ Mat3 createRotationMatrix(const Vec3& axle, const double angle) {
 /**
  * Produkt zweier 3x3-Matrizen m1·m2.
  */
-Mat3 multiplyMatrix(const Mat3& m1, const Mat3& m2) {
+Mat3 operator*(const Mat3& m1, const Mat3& m2) {
     Mat3 result{};
     for (int i = 0; i < 3; i++) {
         for (int k = 0; k < 3; k++) {
@@ -1238,7 +1238,7 @@ Mat3 multiplyMatrix(const Mat3& m1, const Mat3& m2) {
 /**
  * Matrix angewandt auf einen Vektor: matrix·point.
  */
-Vec3 applyMatrix(const Vec3& point, const Mat3& matrix) {
+Vec3 operator*(const Mat3& matrix, const Vec3& point) {
     return {
         .x = point.x * matrix.m[0][0] + point.y * matrix.m[0][1] + point.z * matrix.m[0][2],
         .y = point.x * matrix.m[1][0] + point.y * matrix.m[1][1] + point.z * matrix.m[1][2],

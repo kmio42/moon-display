@@ -83,6 +83,7 @@ constexpr size_t TIMEZONE_CAPACITY = 64;               // Länge eines POSIX-TZ-
 struct GeoLocation {
     double longitude;                   // Geographische Länge [rad], Ost positiv
     double latitude;                    // Geographische Breite φ [rad]
+    double elevation;                   // Höhe über dem Meeresspiegel H [m], Kapitel 10
     char timezone[TIMEZONE_CAPACITY];   // Zeitzone als POSIX-TZ-String, z. B. "CET-1CEST,M3.5.0,M10.5.0/3";
                                         // nur für die Ausgabe in Lokalzeit, die Berechnungen laufen in UT
 };
@@ -207,8 +208,8 @@ NodePassage calculateNextMoonNode(double jd);
 
 // Matrix-Operationen
 Mat3 createRotationMatrix(const Vec3& axle, double angle);
-Mat3 multiplyMatrix(const Mat3& m1, const Mat3& m2);
-Vec3 applyMatrix(const Vec3& point, const Mat3& matrix);
+Mat3 operator*(const Mat3& m1, const Mat3& m2);         // Matrixprodukt m1·m2
+Vec3 operator*(const Mat3& matrix, const Vec3& point);  // Matrix angewandt auf einen Vektor
 
 } // namespace astro
 

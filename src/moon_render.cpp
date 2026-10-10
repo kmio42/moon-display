@@ -66,9 +66,7 @@ void prepareMoonRender(float phaseParam, float rotation, float mask, int options
     const astro::Mat3 libLatitudeRotCorr = astro::createRotationMatrix({1,0,0},5.78*astro::DEG2RAD);
     const astro::Mat3 axleRotCorr = astro::createRotationMatrix({0,0,1},9*astro::DEG2RAD);
 
-    astro::Mat3 rotMat_temp = multiplyMatrix(axleRotCorr,libLatitudeRotCorr);
-                rotMat_temp = multiplyMatrix(rotMat_temp,libLongitudeRotCorr);
-                rotMat = multiplyMatrix(rotMat_temp, rotMatrix);
+    rotMat = axleRotCorr * libLatitudeRotCorr * libLongitudeRotCorr * rotMatrix;
 #ifdef ARDUINO
     for(int i = 0; i < 3; ++i)
       for(int j = 0; j < 3; ++j)
@@ -120,8 +118,7 @@ void prepareMoonRenderAt(const struct tm& utc, int options) {
   const astro::Mat3 libLatitudeRot = astro::createRotationMatrix({1, 0, 0}, -sky.moonAxle.libration.latitude);
   const astro::Mat3 axleRot = astro::createRotationMatrix({0, 0, 1}, -p + q);
 
-  astro::Mat3 rotMatrix = multiplyMatrix(libLongitudeRot, libLatitudeRot);
-              rotMatrix = multiplyMatrix(rotMatrix, axleRot);
+  const astro::Mat3 rotMatrix = libLongitudeRot * libLatitudeRot * axleRot;
 
   prepareMoonRender(sky.phase, rot, mask, opts, rotMatrix);
 }
@@ -159,7 +156,7 @@ uint16_t moonPixel(int x, int y) {
 
     if(options & OPTION_USE_NASA_MODEL) {
       double z = sqrt(r*r - x*x - y*y);
-      astro::Vec3 point = astro::applyMatrix({(double) x,-(double) y,z},rotMat);
+      astro::Vec3 point = rotMat * astro::Vec3{(double) x, -(double) y, z};
       double len = sqrt(point.x * point.x + point.y * point.y + point.z * point.z);
       point.x /= len;
       point.y /= len;
@@ -174,7 +171,7 @@ uint16_t moonPixel(int x, int y) {
       int pixelY = 0;
       if(options & OPTION_USE_LIBRATION) {
         double z = sqrt(r*r - x*x - y*y);
-        astro::Vec3 point = astro::applyMatrix({(double) x,-(double) y,z},rotMat);
+        astro::Vec3 point = rotMat * astro::Vec3{(double) x, -(double) y, z};
         pixelX = point.x+r;
         pixelY = -point.y+r;
         if(point.z > 0) {

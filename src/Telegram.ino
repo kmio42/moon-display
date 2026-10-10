@@ -361,8 +361,9 @@ static String buildSunMessage() {
 static String buildConfigMessage() {
     char buf[96];
     String msg = "⚙️ Konfiguration\n\n";
-    snprintf(buf, sizeof(buf), "Standort: %.6f / %.6f\n",
-             configLocation.latitude * astro::RAD2DEG, configLocation.longitude * astro::RAD2DEG);
+    snprintf(buf, sizeof(buf), "Standort: %.6f / %.6f, %.0f m\n",
+             configLocation.latitude * astro::RAD2DEG, configLocation.longitude * astro::RAD2DEG,
+             configLocation.elevation);
     msg += buf;
     snprintf(buf, sizeof(buf), "Optionen: %d\n", configDisplayOptions);
     msg += buf;
@@ -397,7 +398,7 @@ static const char HELP_TEXT[] =
     "/sonne – aktuelle Sonnenkoordinaten\n"
     "/bericht – Tagesbericht jetzt senden (auch an Pushover)\n"
     "/config – aktuelle Einstellungen\n"
-    "/standort <lat> <lon> – Standort in Dezimalgrad\n"
+    "/standort <lat> <lon> [höhe] – Standort in Dezimalgrad, Höhe in m\n"
     "/optionen <wert> – Darstellung (Bits: 1=abdunkeln, 2=bläulich, 4=NASA-Textur, 8=Libration, 16=ohne parallakt. Winkel, 32=ohne Positionswinkel)\n"
     "/auto on|off – täglichen Bericht ein/aus\n"
     "/autozeit HH:MM – Uhrzeit des Berichts (Lokalzeit)\n"
@@ -414,7 +415,7 @@ static const char BOT_COMMANDS[] =
     "{\"command\":\"sonne\",\"description\":\"Aktuelle Sonnenkoordinaten\"},"
     "{\"command\":\"bericht\",\"description\":\"Tagesbericht jetzt senden\"},"
     "{\"command\":\"config\",\"description\":\"Aktuelle Einstellungen\"},"
-    "{\"command\":\"standort\",\"description\":\"Standort setzen: <lat> <lon>\"},"
+    "{\"command\":\"standort\",\"description\":\"Standort setzen: <lat> <lon> [höhe]\"},"
     "{\"command\":\"optionen\",\"description\":\"Darstellungsoptionen setzen: <wert>\"},"
     "{\"command\":\"auto\",\"description\":\"Täglichen Bericht ein/aus: on|off\"},"
     "{\"command\":\"autozeit\",\"description\":\"Uhrzeit des Berichts: HH:MM\"},"
@@ -745,17 +746,22 @@ static String handleCommand(String text, const String& chatId) {
         const char* s = args.c_str();
         char* endLat = nullptr;
         char* endLon = nullptr;
+        char* endElev = nullptr;
         double lat = strtod(s, &endLat);
         double lon = strtod(endLat, &endLon);
-        if (endLat == s || endLon == endLat || lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) {
-            return "Ungültige Werte. Erwartet: /standort <lat> <lon>\nLat: -90..90, Lon: -180..180";
+        double elev = strtod(endLon, &endElev);  // optional, ohne Angabe 0 m
+        if (endElev == endLon) elev = 0.0;
+        if (endLat == s || endLon == endLat || lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0
+            || elev < -500.0 || elev > 9000.0) {
+            return "Ungültige Werte. Erwartet: /standort <lat> <lon> [höhe]\nLat: -90..90, Lon: -180..180, Höhe: -500..9000 m";
         }
         configLocation.latitude  = lat * astro::DEG2RAD;
         configLocation.longitude = lon * astro::DEG2RAD;
+        configLocation.elevation = elev;
         saveConfig();
         requestRedraw();
-        char buf[64];
-        snprintf(buf, sizeof(buf), "Standort gespeichert: %.6f / %.6f", lat, lon);
+        char buf[80];
+        snprintf(buf, sizeof(buf), "Standort gespeichert: %.6f / %.6f, %.0f m", lat, lon, elev);
         return buf;
     }
     if (cmd == "/optionen") {
