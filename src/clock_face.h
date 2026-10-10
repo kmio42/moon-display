@@ -2,6 +2,7 @@
 #define CLOCK_FACE_H
 
 #include <Adafruit_GFX.h>
+#include <Adafruit_SPITFT.h>
 #include <time.h>
 
 // 24h-Zifferblatt: 0 Uhr unten, 6 Uhr links, 12 Uhr oben, 18 Uhr rechts.
@@ -26,7 +27,7 @@ ClockData computeClockData(time_t now);
 
 // Zeichnet die Uhr. Beim ersten Aufruf, nach clockFaceInvalidate(), bei Tageswechsel und
 // stündlich (Mondsymbol) wird komplett neu gezeichnet, sonst nur der Stundenzeiger bewegt.
-void drawClockFace(Adafruit_GFX* gfx, time_t now);
+void drawClockFace(Adafruit_SPITFT* gfx, time_t now);
 
 // Erzwingt Neuberechnung und komplettes Neuzeichnen (z. B. nach Standort- oder Zeitzonenwechsel).
 void clockFaceInvalidate();

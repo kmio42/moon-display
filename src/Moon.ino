@@ -92,18 +92,22 @@ void berechneSonnenaufgang() {
 
 // ── Display ──────────────────────────────────────────────────────────────────
 
-// Zeichnet den mit prepareMoonRender()/prepareMoonRenderAt() vorbereiteten Mond aufs Display.
+// Zeichnet den mit prepareMoonRender()/prepareMoonRenderAt() vorbereiteten Mond aufs Display,
+// zeilenweise in einem Block (setAddrWindow + writePixels) statt einzeln mit drawPixel.
 void drawMoon(Adafruit_GC9A01A* tft) {
   const int r = MOON_RADIUS_PX;
+  uint16_t row[2 * MOON_RADIUS_PX];
   for (int y = -r; y < r; y++) {
-    for (int x = -r; x < r; x++) {
-      if (x * x + y * y > r * r) {
-        // Pixel außerhalb des Mondkreises, also Hintergrund
-        // Da Display rund ist, muss hier kein Wert zugewiesen werden
-        continue;
-      }
-      tft->drawPixel(x + r, y + r, moonPixel(x, y));
+    // Pixel dieser Zeile innerhalb des Mondkreises: −half..half (und < r). Außerhalb muss
+    // nichts gezeichnet werden, da das Display rund ist.
+    int half = 0;
+    while ((half + 1) * (half + 1) + y * y <= r * r) half++;
+    const int xStart = -half;
+    const int xEnd = std::min(half, r - 1);
+    for (int x = xStart; x <= xEnd; x++) {
+      row[x - xStart] = moonPixel(x, y);
     }
+    tft->drawRGBBitmap(xStart + r, y + r, row, xEnd - xStart + 1, 1);
     yield();
   }
 }

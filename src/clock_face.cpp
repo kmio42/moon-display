@@ -1,5 +1,6 @@
 #include "clock_face.h"
 
+#include <algorithm>
 #include <math.h>
 #include <Fonts/FreeSansBold9pt7b.h>
 
@@ -245,7 +246,8 @@ bool sameData(const ClockData& a, const ClockData& b) {
         && a.dashed == b.dashed && a.dashedDayOffset == b.dashedDayOffset;
 }
 
-void drawMoonSymbol(Adafruit_GFX* gfx, time_t now) {
+// Zeichnet die Pixel zeilenweise in einem Block (setAddrWindow + writePixels) statt einzeln mit drawPixel.
+void drawMoonSymbol(Adafruit_SPITFT* tft, time_t now) {
     struct tm utc;
     gmtime_r(&now, &utc);
     prepareMoonRenderAt(utc);
@@ -254,15 +256,23 @@ void drawMoonSymbol(Adafruit_GFX* gfx, time_t now) {
     const float scale = (float) MOON_RADIUS_PX / MOON_SYMBOL_RADIUS;
     const int16_t cx = lroundf(CX);
     const int16_t cy = lroundf(CY);
+    constexpr int R2 = MOON_SYMBOL_RADIUS * MOON_SYMBOL_RADIUS;
+    uint16_t row[2 * MOON_SYMBOL_RADIUS];
     for (int y = -MOON_SYMBOL_RADIUS; y < MOON_SYMBOL_RADIUS; y++) {
         const int y0 = (int) floorf((y + 0.25f) * scale);
         const int y1 = (int) floorf((y + 0.75f) * scale);
-        for (int x = -MOON_SYMBOL_RADIUS; x < MOON_SYMBOL_RADIUS; x++) {
-            if (x * x + y * y > MOON_SYMBOL_RADIUS * MOON_SYMBOL_RADIUS) continue;
+        // Pixel dieser Zeile innerhalb des Kreises: −half..half (und < MOON_SYMBOL_RADIUS)
+        int half = 0;
+        while ((half + 1) * (half + 1) + y * y <= R2) half++;
+        const int xStart = -half;
+        const int xEnd = std::min(half, MOON_SYMBOL_RADIUS - 1);
+        for (int x = xStart; x <= xEnd; x++) {
             const int x0 = (int) floorf((x + 0.25f) * scale);
             const int x1 = (int) floorf((x + 0.75f) * scale);
-            gfx->drawPixel(cx + x, cy + y, moonPixelAveraged(x0, y0, x1, y1));
+            row[x - xStart] = moonPixelAveraged(x0, y0, x1, y1);
         }
+        // Außerhalb des Kreises bleibt der Hintergrund (Zeiger, Striche) unverändert
+        tft->drawRGBBitmap(cx + xStart, cy + y, row, xEnd - xStart + 1, 1);
     }
 }
 
@@ -412,7 +422,7 @@ ClockData computeClockData(time_t now) {
     return d;
 }
 
-void drawClockFace(Adafruit_GFX* gfx, time_t now) {
+void drawClockFace(Adafruit_SPITFT* gfx, time_t now) {
     const ClockData d = computeClockData(now);
     const float nowHours = localHours(now);
     const bool moonUp = moonAboveHorizon(now);
