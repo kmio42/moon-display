@@ -30,35 +30,35 @@ SkyState computeSky(const struct tm& utc) {
     s.jd = julianDateFromTm(utc);
 
     // Lokale Sternzeit in Radiant (GMST + Längengrad-Offset)
-    s.gmstHours    = astro::calculateSiderealTime(s.jd);
+    s.gmstHours    = astro::calculateGreenwichSiderealTime(s.jd);
     s.siderealTime = s.gmstHours * M_PI / 12.0 + configLongitude * astro::DEG2RAD;
 
     // ── Sonnenposition ───────────────────────────────────────────────────────
-    s.sunLongitude = astro::calculateEclipticalLength(s.jd);
-    s.sunRaDek     = astro::calculateRaDek(s.sunLongitude, 0.0);
-    s.sunAzH       = astro::calculateHAzFromRaDek(s.sunRaDek, s.siderealTime, latitude);
+    s.sunLongitude = astro::calculateSunLongitude(s.jd);
+    s.sunRaDek     = astro::calculateEquatorial(s.sunLongitude, 0.0);
+    s.sunAzH       = astro::calculateHorizontal(s.sunRaDek, s.siderealTime, latitude);
     double sunDistance = 149597870;  // in km (1 AE)
 
     // ── Mondposition ─────────────────────────────────────────────────────────
-    s.moon = astro::calculateMoon(s.jd);
-    s.moonRaDek = astro::calculateRaDek(s.moon.longitude, s.moon.latitude);
+    s.moon = astro::calculateMoonPosition(s.jd);
+    s.moonRaDek = astro::calculateEquatorial(s.moon.longitude, s.moon.latitude);
     double moonParallax = asin(6378.14 / s.moon.distance);
-    s.moonRaDek = astro::calculateParallax(s.moonRaDek, moonParallax, s.siderealTime, latitude);
-    s.moonAzH   = astro::calculateHAzFromRaDek(s.moonRaDek, s.siderealTime, latitude);
+    s.moonRaDek = astro::calculateTopocentric(s.moonRaDek, moonParallax, s.siderealTime, latitude);
+    s.moonAzH   = astro::calculateHorizontal(s.moonRaDek, s.siderealTime, latitude);
 
     // ── Mondachse & Libration ────────────────────────────────────────────────
-    s.moonAxle = astro::calculateMoonAxle(s.jd, s.moon);
+    s.moonAxle = astro::calculateMoonOrientation(s.jd, s.moon);
 
     // ── Mondphase und parallaktischer Winkel ──────────────────────────────────
-    s.phase  = astro::calculateMoonPhase(s.sunRaDek, sunDistance, s.moonRaDek, s.moon.distance);
+    s.phase  = astro::calculateMoonIlluminatedFraction(s.sunRaDek, sunDistance, s.moonRaDek, s.moon.distance);
     // Zunehmend, solange der Mond der Sonne in ekliptikaler Länge um weniger als 180° vorausläuft
     s.waxing = fmod(s.moon.longitude - s.sunLongitude + 4 * M_PI, 2 * M_PI) < M_PI;
 
     // Positionswinkel (Mitte) des beleuchteten Mondrandes
     // Formel 46.5 aus "Astronomische Algorithmen, 2. Auflage" von Jean Meeus.
-    s.chi = atan2(cos(s.sunRaDek.dek) * sin(s.sunRaDek.ra - s.moonRaDek.ra),
-                  sin(s.sunRaDek.dek) * cos(s.moonRaDek.dek)
-                - cos(s.sunRaDek.dek) * sin(s.moonRaDek.dek) * cos(s.sunRaDek.ra - s.moonRaDek.ra));
+    s.chi = atan2(cos(s.sunRaDek.dec) * sin(s.sunRaDek.ra - s.moonRaDek.ra),
+                  sin(s.sunRaDek.dec) * cos(s.moonRaDek.dec)
+                - cos(s.sunRaDek.dec) * sin(s.moonRaDek.dec) * cos(s.sunRaDek.ra - s.moonRaDek.ra));
 
     // Parallaktischer Winkel für Mond (ortsabhängig)
     s.q = astro::calculateParallacticAngle(s.moonRaDek, s.siderealTime, latitude);
@@ -110,8 +110,8 @@ DayEvents eventsForLocalDay(time_t t, bool withMoon) {
         astro::SunriseSunset sun = astro::calculateSunriseSunset(jd0 + 0.5, lat, lon);
         if (sun.valid) {
             e.sunValid = true;
-            takeEvent(jd0, sun.rising,  localDay, e.hasSunrise, e.sunrise);
-            takeEvent(jd0, sun.setting, localDay, e.hasSunset,  e.sunset);
+            takeEvent(jd0, sun.rise,  localDay, e.hasSunrise, e.sunrise);
+            takeEvent(jd0, sun.set, localDay, e.hasSunset,  e.sunset);
         }
         if (withMoon) {
             astro::MoonRiseSet moon = astro::calculateMoonRiseSet(jd0 + 0.5, lon, lat);
@@ -152,14 +152,14 @@ static double culminationHeight(time_t t) {
         if (moon.hasTransit) takeEvent(jd0, moon.transitHours, localDay, found, transit);
     }
 
-    const astro::MoonPosition moon = astro::calculateMoon(transit / 86400.0 + 2440587.5);
-    const double dek = astro::calculateRaDek(moon.longitude, moon.latitude).dek;
+    const astro::MoonPosition moon = astro::calculateMoonPosition(transit / 86400.0 + 2440587.5);
+    const double dek = astro::calculateEquatorial(moon.longitude, moon.latitude).dec;
     return M_PI / 2 - fabs(lat - dek);
 }
 
 // Elongation des Mondes (ekliptikale Länge Mond − Sonne), -π..π
 static double elongation(double jd) {
-    const double e = astro::calculateMoon(jd).longitude - astro::calculateEclipticalLength(jd);
+    const double e = astro::calculateMoonPosition(jd).longitude - astro::calculateSunLongitude(jd);
     return atan2(sin(e), cos(e));
 }
 
@@ -217,20 +217,20 @@ MoonOutlook moonOutlookFor(time_t t) {
     if (findElongation(jdStart, jdEnd, M_PI, jd)) {
         o.hasFullMoon = true;
         o.fullMoon = timeFromJulianDate(jd);
-        const astro::MoonPosition moon = astro::calculateMoon(jd);
+        const astro::MoonPosition moon = astro::calculateMoonPosition(jd);
         o.lunarEclipse = fabs(moon.latitude) < LUNAR_ECLIPSE_LIMIT;
         o.superMoon = moon.distance < SUPER_MOON_DISTANCE;
         o.miniMoon  = moon.distance > MINI_MOON_DISTANCE;
         if (o.lunarEclipse) {
             struct tm utc;
             gmtime_r(&o.fullMoon, &utc);
-            o.lunarEclipseVisible = computeSky(utc).moonAzH.height > 0;
+            o.lunarEclipseVisible = computeSky(utc).moonAzH.altitude > 0;
         }
     }
     if (findElongation(jdStart, jdEnd, 0.0, jd)) {
         o.hasNewMoon = true;
         o.newMoon = timeFromJulianDate(jd);
-        o.solarEclipse = fabs(astro::calculateMoon(jd).latitude) < SOLAR_ECLIPSE_LIMIT;
+        o.solarEclipse = fabs(astro::calculateMoonPosition(jd).latitude) < SOLAR_ECLIPSE_LIMIT;
     }
     return o;
 }

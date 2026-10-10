@@ -45,10 +45,10 @@ void calculateMoon(const struct tm& time, bool printInfo, Adafruit_GC9A01A* tft 
         double rot, mask;
         moonRenderAngles(sky, configDisplayOptions, rot, mask);
         Serial.printf("  Julianisches Datum:       %f\n", sky.jd);
-        Serial.printf("  Mondposition RA/Dek:      %6.2f° / %6.2f°\n", sky.moonRaDek.ra * astro::RAD2DEG, sky.moonRaDek.dek * astro::RAD2DEG);
-        Serial.printf("  Mondposition Azimut/Höhe: %6.2f° / %6.2f°\n", sky.moonAzH.azimut * astro::RAD2DEG, sky.moonAzH.height * astro::RAD2DEG);
+        Serial.printf("  Mondposition RA/Dek:      %6.2f° / %6.2f°\n", sky.moonRaDek.ra * astro::RAD2DEG, sky.moonRaDek.dec * astro::RAD2DEG);
+        Serial.printf("  Mondposition Azimut/Höhe: %6.2f° / %6.2f°\n", sky.moonAzH.azimuth * astro::RAD2DEG, sky.moonAzH.altitude * astro::RAD2DEG);
         Serial.printf("  Mondlibration:            %6.2f° / %6.2f°\n", sky.moonAxle.libration.longitude * astro::RAD2DEG, sky.moonAxle.libration.latitude * astro::RAD2DEG);
-        Serial.printf("  Mondachse:                %6.2f°\n", sky.moonAxle.axle * astro::RAD2DEG);
+        Serial.printf("  Mondachse:                %6.2f°\n", sky.moonAxle.positionAngle * astro::RAD2DEG);
         Serial.printf("  Mondphase (0-1):          %6.4f\n", sky.phase);
         Serial.printf("  Mondrand:                 %6.2f°\n", sky.chi * astro::RAD2DEG);
         Serial.printf("  Parallaktischer Winkel:   %6.2f°\n", sky.q * astro::RAD2DEG);
@@ -87,8 +87,8 @@ void berechneSonnenaufgang() {
         Serial.println("  Sonnenauf/-untergang: Polartag oder Polarnacht.");
         return;
     }
-    printHHMM("Sonnenaufgang:", s.rising + 2);
-    printHHMM("Sonnenuntergang:", s.setting + 2);
+    printHHMM("Sonnenaufgang:", s.rise + 2);
+    printHHMM("Sonnenuntergang:", s.set + 2);
 }
 
 // ── Display ──────────────────────────────────────────────────────────────────

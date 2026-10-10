@@ -293,9 +293,9 @@ static String buildMoonMessage() {
     String msg = String(moonPhaseEmoji(sky.phase, sky.waxing)) + " Mond – " + formatNow() + "\n<pre>";
 
     msg += blockLine("Ekl. L/B", formatDm(sky.moon.longitude, true, true) + "/" + formatDm(sky.moon.latitude, true));
-    msg += blockLine("RA/Dek", formatHm(sky.moonRaDek.ra) + "/" + formatDm(sky.moonRaDek.dek, true));
+    msg += blockLine("RA/Dek", formatHm(sky.moonRaDek.ra) + "/" + formatDm(sky.moonRaDek.dec, true));
     // Azimut nach Meeus von Süden gezählt (S=0°, W=90°)
-    msg += blockLine("Az/Höhe", formatDm(sky.moonAzH.azimut, true, true) + "/" + formatDm(sky.moonAzH.height, true));
+    msg += blockLine("Az/Höhe", formatDm(sky.moonAzH.azimuth, true, true) + "/" + formatDm(sky.moonAzH.altitude, true));
 
     snprintf(buf, sizeof(buf), " (%.0f %%)", diameterPercent(sky.moon.distance));
     msg += blockLine("Durchm.", formatArcmin(moonDiameter(sky.moon.distance)) + buf);
@@ -306,8 +306,8 @@ static String buildMoonMessage() {
 
     snprintf(buf, sizeof(buf), "%s, %.1f %%", sky.waxing ? "zunehmend" : "abnehmend", sky.phase * 100.0);
     msg += blockLine("Phase", buf);
-    // calculateMoonAxle() liefert die Libration in Länge nicht normiert
-    msg += blockLine("Librat.", "L " + formatDm(astro::normalizeAngleDifferenceRad(sky.moonAxle.libration.longitude), true)
+    // calculateMoonOrientation() liefert die Libration in Länge nicht normiert
+    msg += blockLine("Librat.", "L " + formatDm(astro::normalizeRadiansSigned(sky.moonAxle.libration.longitude), true)
                               + " / B " + formatDm(sky.moonAxle.libration.latitude, true));
 
     // Aufgang, Kulmination und Untergang des lokalen Tages in zeitlicher Reihenfolge,
@@ -317,7 +317,7 @@ static String buildMoonMessage() {
     if (today.hasMoonTransit) {
         struct tm transitUtc;
         gmtime_r(&today.moonTransit, &transitUtc);
-        transitHeight = ", " + formatDm(computeSky(transitUtc).moonAzH.height, true);
+        transitHeight = ", " + formatDm(computeSky(transitUtc).moonAzH.altitude, true);
     }
     struct Event {
         const char* label;
@@ -356,8 +356,8 @@ static String buildSunMessage() {
     SkyState sky = computeSky(utc);
 
     String msg = "☀️ Sonne – " + formatNow() + "\n\n";
-    msg += "RA / Dek: " + formatRa(sky.sunRaDek.ra) + " / " + formatDeg(sky.sunRaDek.dek) + "\n";
-    msg += "Azimut / Höhe: " + formatAzimut(sky.sunAzH.azimut) + " / " + formatDeg(sky.sunAzH.height);
+    msg += "RA / Dek: " + formatRa(sky.sunRaDek.ra) + " / " + formatDeg(sky.sunRaDek.dec) + "\n";
+    msg += "Azimut / Höhe: " + formatAzimut(sky.sunAzH.azimuth) + " / " + formatDeg(sky.sunAzH.altitude);
     return msg;
 }
 

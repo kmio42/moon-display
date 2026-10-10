@@ -11,12 +11,12 @@ struct SkyState {
     double gmstHours;               // Greenwich-Sternzeit in Stunden
     double siderealTime;            // Lokale Sternzeit in Radiant
     double sunLongitude;            // Ekliptikale Länge der Sonne
-    astro::RaDek sunRaDek;
-    astro::AzimutHeight sunAzH;
+    astro::Equatorial sunRaDek;
+    astro::Horizontal sunAzH;
     astro::MoonPosition moon;       // Geozentrisch, Distanz in km
-    astro::RaDek moonRaDek;         // Topozentrisch
-    astro::AzimutHeight moonAzH;
-    astro::MoonAxle moonAxle;
+    astro::Equatorial moonRaDek;         // Topozentrisch
+    astro::Horizontal moonAzH;
+    astro::MoonOrientation moonAxle;
     double phase;                   // Beleuchteter Anteil 0..1
     bool waxing;                    // Zunehmend
     double chi;                     // Positionswinkel des hellen Mondrandes

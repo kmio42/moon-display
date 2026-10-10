@@ -81,7 +81,7 @@ void prepareMoonRender(float phaseParam, float rotation, float mask, int options
 // in die Darstellung eingehen (0, wenn ignoriert).
 static void orientationAngles(const SkyState& sky, int options, double& q, double& p) {
   q = (options & OPTION_IGNORE_PARALLACTIC) ? 0.0 : sky.q;
-  p = (options & OPTION_IGNORE_POSITION_ANGLE) ? 0.0 : sky.moonAxle.axle;
+  p = (options & OPTION_IGNORE_POSITION_ANGLE) ? 0.0 : sky.moonAxle.positionAngle;
 }
 
 void moonRenderAngles(const SkyState& sky, int options, double& rotation, double& mask) {
@@ -90,7 +90,7 @@ void moonRenderAngles(const SkyState& sky, int options, double& rotation, double
 
   // Zenitwinkel des hellen Mondrandes: chi - q. Ohne Positionswinkel wird das ganze Bild
   // um P zurückgedreht (Mondnordpol oben), der helle Rand also mit.
-  mask = (sky.chi - (sky.moonAxle.axle - p) - q + M_PI/2);
+  mask = (sky.chi - (sky.moonAxle.positionAngle - p) - q + M_PI/2);
 
   rotation = (p - q + 0.004919 - 0.116413461); //ermittelte Korrektur mit Stellarium
 }
@@ -106,7 +106,7 @@ void prepareMoonRenderAt(const struct tm& utc, int options) {
   int opts = options;
   if (opts < 0) {
     opts = configDisplayOptions & ~OPTION_BLUISH_TINT;
-    if ((configDisplayOptions & OPTION_BLUISH_TINT) && sky.moonAzH.height < 0) {
+    if ((configDisplayOptions & OPTION_BLUISH_TINT) && sky.moonAzH.altitude < 0) {
       opts |= OPTION_BLUISH_TINT;
     }
   }

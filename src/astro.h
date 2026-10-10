@@ -14,23 +14,23 @@
  * Umgesetzt                                        Formeln/Tabellen          Funktion
  *  3  Interpolation                                3.3                       interpolate
  *  7  Julianischer Tag                             7.1                       calculateJulianDate
- * 10  Der Erdglobus (ρ sin φ′, ρ cos φ′)                                     calculateParallax
- * 11  Sternzeit in Greenwich                       11.1, 11.4                calculateSiderealTime
- * 12  Umwandeln von Koordinaten                    12.3–12.6                 calculateRaDek, calculateHAzFromRaDek
+ * 10  Der Erdglobus (ρ sin φ′, ρ cos φ′)                                     calculateTopocentric
+ * 11  Sternzeit in Greenwich                       11.1, 11.4                calculateGreenwichSiderealTime
+ * 12  Umwandeln von Koordinaten                    12.3–12.6                 calculateEquatorial, calculateHorizontal
  * 13  Der parallaktische Winkel                    13.1                      calculateParallacticAngle
  * 14  Aufgang, Durchgang, Untergang (Sonne; h0)    14.1, 14.2                calculateSunriseSunset
  * 21  Schiefe der Ekliptik (ohne Nutation)         21.2                      calculateObliquity
- * 24  Koordinaten der Sonne (niedrige Genauigk.)   24.1–24.5                 calculateEclipticalLength, …
- * 26  Äquinoktien und Solstitien                   Tab. 26.2, 26.3           calculateJDOfPoint
+ * 24  Koordinaten der Sonne (niedrige Genauigk.)   24.1–24.5                 calculateSunLongitude, …
+ * 26  Äquinoktien und Solstitien                   Tab. 26.2, 26.3           calculateEquinoxSolstice
  * 27  Zeitgleichung (ohne Nutation)                27.1                      calculateEquationOfTime
- * 29  Keplergleichung                              29.1, 29.3, 29.5          calculateTrueAnomaly, calculateOrbitRadiusEarth
- * 37  Planeten in Perihel und Aphel (nur Erde)                               calculatePerihelAphel
- * 39  Parallaxe                                    39.2, 39.3                calculateParallax
- * 45  Die Mondposition                             45.1–45.7, Tab. 45.1/45.2 calculateMoon, calculateRisingKnotMoon
- * 46  Beleuchteter Teil der Mondscheibe            46.1–46.3                 calculateMoonPhase
+ * 29  Keplergleichung                              29.1, 29.3, 29.5          calculateEarthTrueAnomaly, calculateEarthSunDistance
+ * 37  Planeten in Perihel und Aphel (nur Erde)                               calculateEarthApsis
+ * 39  Parallaxe                                    39.2, 39.3                calculateTopocentric
+ * 45  Die Mondposition                             45.1–45.7, Tab. 45.1/45.2 calculateMoonPosition, calculateMoonAscendingNode
+ * 46  Beleuchteter Teil der Mondscheibe            46.1–46.3                 calculateMoonIlluminatedFraction
  * 48  Perigäum und Apogäum des Mondes              48.1, 48.3, Tab. 48.1/48.2 calculateNextMoonApsis
  * 49  Knotendurchgänge des Mondes                                            calculateNextMoonNode
- * 51  Ephemeride zur physischen Beobachtung        51.1, 51.2                calculateMoonAxle
+ * 51  Ephemeride zur physischen Beobachtung        51.1, 51.2                calculateMoonOrientation
  *     des Mondes (Libration, Positionswinkel der Achse)
  *
  * Nicht aus dem Buch: Mondauf-/-untergang, Meridiandurchgang und höchster Stand
@@ -63,31 +63,31 @@ namespace astro {
 // ---------------------------------------------------------------
 
 // Kein eigenes PI: Arduino.h definiert PI als Makro.
-constexpr double DEG2RAD = M_PI / 180.0;        // Umrechnung Grad → Radiant [rad/°]
-constexpr double RAD2DEG = 180.0 / M_PI;        // Umrechnung Radiant → Grad [°/rad]
+constexpr double DEG2RAD = M_PI / 180.0;               // Umrechnung Grad → Radiant [rad/°]
+constexpr double RAD2DEG = 180.0 / M_PI;               // Umrechnung Radiant → Grad [°/rad]
 
-constexpr double AE_TO_KM = 149597870.7;        // Astronomische Einheit [km]
-constexpr double ECCENTRICITY = 0.016708634;    // Exzentrizität der Erdbahn J2000 [1]
-constexpr double SEMI_MAJOR_AXIS = 1.000001018; // Große Halbachse der Erdbahn [AE], Formel 24.5
-constexpr double EPSILON = 23.439292;           // Mittlere Schiefe der Ekliptik J2000 [°]
-constexpr double EARTH_RADIUS = 6378.137;       // Äquatorradius der Erde [km]
-constexpr double MOON_RADIUS = 1738.1;          // Mondradius [km]
-constexpr double MOON_ORBIT_RADIUS = 384400.0;  // Mittlere Entfernung Erde–Mond [km]
+constexpr double AU_KM = 149597870.7;                  // Astronomische Einheit [km]
+constexpr double ECCENTRICITY = 0.016708634;           // Exzentrizität der Erdbahn J2000 [1]
+constexpr double EARTH_SEMI_MAJOR_AXIS = 1.000001018;  // Große Halbachse der Erdbahn [AE], Formel 24.5
+constexpr double OBLIQUITY_J2000 = 23.439292;          // Mittlere Schiefe der Ekliptik J2000 [°]
+constexpr double EARTH_RADIUS = 6378.137;              // Äquatorradius der Erde [km]
+constexpr double MOON_RADIUS = 1738.1;                 // Mondradius [km]
+constexpr double MOON_ORBIT_RADIUS = 384400.0;         // Mittlere Entfernung Erde–Mond [km]
 
 // ---------------------------------------------------------------
 //  Datenstrukturen
 // ---------------------------------------------------------------
 
 // Äquatoriale Koordinaten
-struct RaDek {
+struct Equatorial {
     double ra;              // Rektaszension α [rad]
-    double dek;             // Deklination δ [rad]
+    double dec;             // Deklination δ [rad]
 };
 
 // Horizontale Koordinaten
-struct AzimutHeight {
-    double azimut;          // Azimut A [rad], von Süden über Westen gezählt
-    double height;          // Höhe h [rad]
+struct Horizontal {
+    double azimuth;         // Azimut A [rad], von Süden über Westen gezählt
+    double altitude;        // Höhe h [rad]
 };
 
 // Geozentrische ekliptikale Position des Mondes
@@ -104,16 +104,16 @@ struct Libration {
 };
 
 // Orientierung des Mondes (Kapitel 51)
-struct MoonAxle {
+struct MoonOrientation {
     Libration libration;
-    double axle;            // Positionswinkel der Mondachse P [rad]
+    double positionAngle;   // Positionswinkel der Mondachse P [rad]
 };
 
 // Sonnenauf- und -untergang eines UT-Tags (Kapitel 14)
 struct SunriseSunset {
-    double zenit;           // Meridiandurchgang [h UT]
-    double rising;          // Aufgang [h UT]
-    double setting;         // Untergang [h UT]
+    double transit;         // Meridiandurchgang [h UT]
+    double rise;            // Aufgang [h UT]
+    double set;             // Untergang [h UT]
     bool valid;             // false bei Polartag oder Polarnacht
 };
 
@@ -147,7 +147,7 @@ struct MoonNode {
 enum class EquinoxType { Spring, Summer, Autumn, Winter };
 
 // Perihel/Aphel der Erde (Kapitel 37)
-enum class PerihelType { Perihel, Aphel };
+enum class EarthApsisType { Perihelion, Aphelion };
 
 // Vektor und 3x3-Matrix für die Drehung der Mondtextur
 struct Vec3 {
@@ -163,27 +163,27 @@ struct Mat3 {
 // ---------------------------------------------------------------
 
 // Winkel-Normalisierung
-double normalizeAngleDegree(double angle);             // [°] → [0°, 360°)
-double normalizeAngleDifferenceRad(double angle);      // [rad] → (−π, π]
+double normalizeDegrees(double angle);                  // [°] → [0°, 360°)
+double normalizeRadiansSigned(double angle);            // [rad] → (−π, π]
 
 // Zeit
-double calculateJulianDate(int year, int month, int day, double hours);  // [JD]
-double calculateJulianEpoch(double jd);                // Julianische Jahrhunderte seit J2000.0
-double calculateSiderealTime(double jd);               // Mittlere Sternzeit Greenwich [h]
+double calculateJulianDate(int year, int month, int day, double hours);  // Julianischer Tag [JD]
+double calculateJulianCenturies(double jd);             // T seit J2000.0 [Julianische Jahrhunderte]
+double calculateGreenwichSiderealTime(double jd);       // Mittlere Sternzeit Greenwich θ0 [h]
 
 // Sonne und Erdbahn
-double calculateObliquity(double jd);                  // Mittlere Schiefe der Ekliptik ε0 [rad]
-double calculateEclipticalLength(double jd);           // Wahre Länge der Sonne [rad]
-double calculateTrueAnomaly(double jd);                // Wahre Anomalie der Erde [rad]
-double calculateOrbitRadiusEarth(double nu);           // Abstand Erde–Sonne [AE]
-double calculateCurrentExcentric(double jd);           // Exzentrizität der Erdbahn [1]
+double calculateObliquity(double jd);                   // Mittlere Schiefe der Ekliptik ε0 [rad]
+double calculateSunLongitude(double jd);                // Wahre geometrische Länge der Sonne [rad]
+double calculateEarthTrueAnomaly(double jd);            // Wahre Anomalie der Erde ν [rad]
+double calculateEarthSunDistance(double nu);            // Abstand Erde–Sonne [AE]
+double calculateEarthEccentricity(double jd);           // Exzentrizität der Erdbahn [1]
 double calculateEquationOfTime(double jd, bool withEarthTilt);  // Zeitgleichung [min]
 
-// Koordinatentransformation
-RaDek calculateRaDek(double eclipticalLongitude, double eclipticalLatitude);
-AzimutHeight calculateHAzFromRaDek(const RaDek& radek, double localSiderealTime, double latitude);
-double calculateParallacticAngle(const RaDek& radek, double localSiderealTime, double latitude);
-RaDek calculateParallax(const RaDek& radek, double parallax, double localSiderealTime, double latitude);
+// Koordinatentransformation (Winkel [rad], Sternzeit als lokale Sternzeit θ [rad])
+Equatorial calculateEquatorial(double eclipticalLongitude, double eclipticalLatitude);
+Horizontal calculateHorizontal(const Equatorial& equ, double localSiderealTime, double latitude);
+double calculateParallacticAngle(const Equatorial& equ, double localSiderealTime, double latitude);
+Equatorial calculateTopocentric(const Equatorial& equ, double parallax, double localSiderealTime, double latitude);
 
 // Interpolation
 double interpolate(double y1, double y2, double y3, double n);
@@ -191,16 +191,16 @@ double interpolate(double y1, double y2, double y3, double n);
 // Sonnenauf-/-untergang
 SunriseSunset calculateSunriseSunset(double jd, double latitude, double longitude);
 
-// Solstitien und Äquinoktien, Perihel/Aphel [JD]
-double calculateJDOfPoint(int year, EquinoxType type);
-double calculatePerihelAphel(int year, int month, PerihelType type);
+// Solstitien und Äquinoktien, Perihel/Aphel der Erde [JDE]
+double calculateEquinoxSolstice(int year, EquinoxType type);
+double calculateEarthApsis(int year, int month, EarthApsisType type);
 
 // Mond
-MoonPosition calculateMoon(double jd);
-double calculateRisingKnotMoon(double jd);             // Länge des aufsteigenden Knotens Ω [rad]
-double calculateMoonPhase(const RaDek& sunRaDek, double sunDistance,
-                          const RaDek& moonRaDek, double moonDistance);  // Beleuchteter Teil k [0..1]
-MoonAxle calculateMoonAxle(double jd, const MoonPosition& moon);
+MoonPosition calculateMoonPosition(double jd);
+double calculateMoonAscendingNode(double jd);           // Länge des aufsteigenden Knotens Ω [rad]
+double calculateMoonIlluminatedFraction(const Equatorial& sunEqu, double sunDistance,
+                                        const Equatorial& moonEqu, double moonDistance);  // k [0..1]
+MoonOrientation calculateMoonOrientation(double jd, const MoonPosition& moon);
 MoonRiseSet calculateMoonRiseSet(double jd, double longitude, double latitude);
 MoonApsis calculateNextMoonApsis(double jd, MoonApsisType type);
 MoonNode calculateNextMoonNode(double jd);

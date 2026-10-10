@@ -196,7 +196,7 @@ void updateCache(time_t now) {
 bool moonAboveHorizon(time_t now) {
     struct tm utc;
     gmtime_r(&now, &utc);
-    return computeSky(utc).moonAzH.height > 0.0;
+    return computeSky(utc).moonAzH.altitude > 0.0;
 }
 
 void setDashed(ClockData& d, const MoonEvent& e, int today) {
