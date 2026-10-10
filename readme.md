@@ -7,8 +7,8 @@ An internet connection is only needed as a time source — all astronomical calc
 ## Features
 * Real-time moon rendering showing the current appearance as seen from the observer's location
 * Accurate moon phase, libration, and axial tilt calculation
-* Parallax correction based on the observer's geographic position
-* All astronomical calculations performed locally on the device using formulas from *"Astronomical Algorithms"* by Jean Meeus
+* Parallax correction based on the observer's geographic position and elevation
+* All astronomical calculations performed locally on the device using formulas from *"Astronomical Algorithms"* by Jean Meeus (German 2nd edition, chapter numbering as in the 1991 English edition)
 * Time synchronisation via NTP — internet connection only needed as a time source
 * Connects to up to 3 configured Wi-Fi networks (automatic selection by signal strength)
 * Texture options: high-resolution texture from NASA's CGI Moon Kit or self-taken photograph
@@ -63,7 +63,7 @@ In the group the bot only reacts to commands sent by the user `TELEGRAM_CHAT_ID`
 | `/sonne` | Current sun coordinates: RA/Dec, azimuth/altitude |
 | `/bericht` | Send the daily report now (also to Pushover, if configured) |
 | `/config` | Show current configuration |
-| `/standort <lat> <lon>` | Set observer location in decimal degrees |
+| `/standort <lat> <lon> [elevation]` | Set observer location in decimal degrees, optionally with elevation above sea level in metres |
 | `/optionen <value>` | Set display options bitmask (see below) |
 | `/auto on\|off` | Enable or disable the daily report (auto mode) |
 | `/autozeit HH:MM` | Time of the daily report (local time) |
@@ -118,7 +118,7 @@ All runtime settings are stored in flash (NVS) and survive reboots. Connect at *
 |---|---|
 | `help` | Show available commands |
 | `config` | Show current configuration |
-| `set_location <lat> <lon>` | Set observer location in decimal degrees (e.g. `set_location 51.0 9.0`) |
+| `set_location <lat> <lon> [elevation]` | Set observer location in decimal degrees, optionally with elevation in metres (e.g. `set_location 51.0 9.0 200`) |
 | `set_options <value>` | Set display options as a bitmask (see below) |
 | `moon [HH:MM:SS \| DD.MM.YYYY HH:MM:SS]` | Show moon for given time or current time |
 | `moon_run` | Start live display (updates every minute) |
@@ -164,7 +164,7 @@ By default the moon is shown as seen in the sky, with the zenith up. With bit 4 
 make clock ARGS='-t "2026-10-04 18:30" -o 9'
 make moon  ARGS='--lat 52.5 --lon 13.4 -t "2026-12-24 20:00" -f weihnachten.png'
 ```
-Options: `-t` local time (`-u`: UTC; default now), `-o` display options bitmask (default 13), `--lat`/`--lon` location (default Darmstadt), `--tz` POSIX time zone, `--square` (clock without round mask), `--no-telegram` (clock with the white "Telegram not reachable" marker), `-f` output file. The tool is in `tools/preview/`.
+Options: `-t` local time (`-u`: UTC; default now), `-o` display options bitmask (default 13), `--lat`/`--lon` location (default Darmstadt), `--elev` elevation in metres, `--tz` POSIX time zone, `--square` (clock without round mask), `--no-telegram` (clock with the white "Telegram not reachable" marker), `-f` output file. The tool is in `tools/preview/`.
 
 ## Hardware
 * ESP32-C3 Super Mini

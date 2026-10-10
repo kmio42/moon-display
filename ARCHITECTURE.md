@@ -44,13 +44,13 @@ Die Schichten sind strikt geordnet: Eine Schicht kennt nur die unter ihr liegend
 |---|---|
 | [MondPhase.ino](src/MondPhase.ino) | Einstiegspunkt: `setup()`, `loop()`, WLAN-Verbindung, NTP, serielle Befehle, Moduswechsel |
 | [Config.ino](src/Config.ino) | Persistente Einstellungen in NVS, Umrechnung UTC → Lokalzeit, Prüfung von Zeitzone und `HH:MM` |
-| [Moon.ino](src/Moon.ino) | Mondanzeige: bereitet das Rendern vor und schreibt die Pixel aufs Display; Debug-Ausgabe |
+| [Moon.ino](src/Moon.ino) | Mondanzeige: bereitet das Rendern vor und schreibt das Bild zeilenweise aufs Display; Debug-Ausgabe |
 | [clock_face.cpp](src/clock_face.cpp) | 24h-Uhr: Zeichnen von Ring, Segment, Zeigern und Mondsymbol |
-| [moon_render.cpp](src/moon_render.cpp) | Mondbild als Funktion `moonPixel(x, y)`, ohne Bildspeicher |
+| [moon_render.cpp](src/moon_render.cpp) | Mondbild als Funktion `moonPixel(x, y)` bzw. verkleinert `moonPixelAveraged()`, ohne Bildspeicher |
 | [picture.ino](src/picture.ino) | Texturen im Flash: `FullMoon` (Foto, 240×240) und `lroc` (NASA-Karte, 480×240) |
 | [png_stream.cpp](src/png_stream.cpp) | PNG-Schreiber, der das Bild Stück für Stück erzeugt |
 | [ephemeris.cpp](src/ephemeris.cpp) | Sonne, Mond, Auf-/Untergänge und Ausblick für einen Standort und Zeitpunkt |
-| [astro.cpp](src/astro.cpp) | Astronomische Formeln nach Jean Meeus |
+| [astro.cpp](src/astro.cpp) | Astronomische Formeln nach Jean Meeus, Datentypen für Winkel, Sternzeit und Julianischen Tag |
 | [Telegram.ino](src/Telegram.ino) | Bot, Tagesbericht, Mondbild, Profil- und Gruppenbild |
 | [Pushover.ino](src/Pushover.ino) | Nachrichten über die Pushover-API |
 | [display_mode.h](src/display_mode.h) | Konstanten der Anzeigemodi |
@@ -72,9 +72,17 @@ Es gibt einen einzigen Kontrollfluss, keine Tasks und keine Interrupts. `loop()`
 4. Je nach Anzeigemodus zeichnen: im Mond-Modus einmal pro Minute, im Uhren-Modus einmal pro Minute
    den Stundenzeiger.
 
-Daraus folgt: Alles, was lange dauert, blockiert die Anzeige. Das betrifft vor allem das Senden
-eines Bildes an Telegram und das Rendern und Hochladen des Profilbildes. Währenddessen wird die
-Anzeige nicht aktualisiert.
+Daraus folgt: Alles, was lange dauert, blockiert die Anzeige, Telegram und die seriellen Befehle.
+Gemessene Dauer auf dem Gerät (ESP32-C3 ohne FPU, 160 MHz):
+
+| Vorgang | Dauer |
+|---|---|
+| Uhr komplett neu zeichnen (Tageswechsel, Start) | 1,7–2,6 s, davon 0,9 s Mondephemeriden |
+| Mondsymbol der Uhr (alle 5 Minuten) | ca. 1,5 s |
+| Mondmodus, ganzes Bild (jede Minute) | 4,3 s |
+| Tagesbericht | 1,7 s |
+| Profil- und Gruppenbild rendern und hochladen | ca. 6 s |
+| Uhr, nur Stundenzeiger (jede Minute) | ca. 20 ms |
 
 `setup()` lädt die Konfiguration, startet WLAN und NTP (`configTime`), initialisiert das Display und
 die seriellen Befehle und ruft `setupTelegram()` auf. Solange NTP nicht synchronisiert hat, liegt
@@ -84,7 +92,7 @@ die Systemzeit vor 2023. Alle Teile prüfen das (`MIN_VALID_TIME`) und warten.
 
 - Das System läuft in **UTC** (`TZ=UTC0`). Alle Berechnungen in `astro` und `ephemeris` nutzen UT.
 - Erst die Ausgabe wird in die Lokalzeit umgerechnet, mit `utcToLocal()` in
-  [Config.ino](src/Config.ino) und dem POSIX-String `configTimezone`. Die Funktion stellt `TZ` nur
+  [Config.ino](src/Config.ino) und dem POSIX-String `configLocation.timezone`. Die Funktion stellt `TZ` nur
   kurz um und setzt es danach wieder auf UTC. `TZ` wird dabei nicht mit `setenv()` gesetzt, sondern
   in einem einmal angelegten Puffer überschrieben (`setTimezone()`): newlib gibt bei `setenv()` den
   alten Wert nicht frei, wenn der neue länger ist, und der ständige Wechsel hat so den Heap geleert.
@@ -95,13 +103,31 @@ die Systemzeit vor 2023. Alle Teile prüfen das (`MIN_VALID_TIME`) und warten.
 
 ## Astronomie
 
-**[astro.cpp](src/astro.cpp)** enthält die Formeln aus Meeus, *Astronomische Algorithmen*: Julianisches
-Datum, Sternzeit, Sonne, Mond, Parallaxe, Libration, parallaktischer Winkel, Auf- und Untergang der
-Sonne, Perigäum und Apogäum des Mondes (Kap. 50) und seine Knotendurchgänge (Kap. 51). Es hat keine
-Abhängigkeiten außer `<cmath>`. TD wird überall mit UT gleichgesetzt (ΔT ≈ 1 min wird vernachlässigt).
+**[astro.cpp](src/astro.cpp)** enthält die Formeln aus Meeus, *Astronomische Algorithmen*, 2. Auflage
+(Barth 1994; Kapitelzählung wie die englische Ausgabe von 1991): Julianischer Tag, Sternzeit, Sonne,
+Mond, Koordinatentransformationen, Parallaxe, Libration, parallaktischer Winkel, Auf- und Untergang der
+Sonne, Perigäum und Apogäum des Mondes (Kap. 48) und seine Knotendurchgänge (Kap. 49). Welche Kapitel
+umgesetzt sind und welche nicht, steht im Kopf von [astro.h](src/astro.h). Kommentare nennen Kapitel
+und Formelnummer, Polynome stehen im Horner-Schema (`horner(T, c0, c1, …)` mit den Koeffizienten
+in der Reihenfolge des Buchs). Es hat keine Abhängigkeiten außer der C++-Standardbibliothek. TD wird
+überall mit UT gleichgesetzt (ΔT ≈ 1 min wird vernachlässigt).
 
-**[ephemeris.cpp](src/ephemeris.cpp)** setzt darauf auf und kennt den Standort (`configLatitude`,
-`configLongitude`):
+Die Einheiten sind über Datentypen abgesichert, die zur Laufzeit nichts kosten (Hüllen um `double`):
+
+- `Angle`: Winkel, intern in Radiant. Erzeugt wird er nur mit Einheit (`Angle::fromDeg`,
+  `fromHours`, `fromDms`, Literal `90_deg`), gelesen mit `.deg()`, `.rad()`, `.hours()`.
+  `sin`/`cos`/`tan` nehmen direkt einen `Angle`, die Umkehrfunktionen heißen `Angle::asin` usw.
+- `SiderealTime`: Sternzeit. Nur `θ0 + Länge → θ` und `θ − α → Stundenwinkel` sind erlaubt.
+- `JulianDay`: Zeitpunkt als Parameter, mit `fromCalendar`, `fromTm`, `fromUnixTime`, `toUnixTime`,
+  `centuries()` (T) und `midnight()`. Ergebnisse wie Auf-/Untergang (Stunden UT) oder JDE von
+  Perigäum und Knoten bleiben `double`.
+
+Gemeinsame Strukturen: `Ecliptic` (Sonne und Mond), `Equatorial`, `Horizontal`, `Selenographic`
+(Libration), `RiseTransitSet` (Auf-/Untergang von Sonne und Mond), `Apsis`, `NodePassage` und
+`GeoLocation` (Länge, Breite, Höhe über dem Meeresspiegel, Zeitzone). Die Höhe geht in die
+topozentrische Korrektur (Kap. 39) ein.
+
+**[ephemeris.cpp](src/ephemeris.cpp)** setzt darauf auf und kennt den Standort (`configLocation`):
 
 - `computeSky(utc)` liefert einen `SkyState`: Sonne und Mond (der Mond topozentrisch, also
   parallaxenkorrigiert), Azimut und Höhe, Phase, zunehmend oder abnehmend, Positionswinkel `chi` des
@@ -109,7 +135,10 @@ Abhängigkeiten außer `<cmath>`. TD wird überall mit UT gleichgesetzt (ΔT ≈
 - `eventsForLocalDay()` liefert Auf- und Untergänge von Sonne und Mond sowie den Meridiandurchgang des
   Mondes als UTC-Zeitpunkte. Der Mond hat
   keine Meeus-Formel für den Aufgang, deshalb wird seine Höhe stündlich abgetastet und der
-  Horizontdurchgang durch quadratische Interpolation bestimmt.
+  Horizontdurchgang durch quadratische Interpolation bestimmt. Das kostet etwa 0,2 s pro UT-Tag.
+  Die Ergebnisse der letzten 5 UT-Tage liegen deshalb in einem Zwischenspeicher
+  (`moonRiseSetForUtDay`), den Uhr, Tagesbericht und Kulminationshöhe gemeinsam nutzen. Ändert sich
+  der Standort, wird er geleert.
 - `moonOutlookFor()` bestimmt für den Tagesbericht die Kulminationshöhe, die Tendenz und die Ereignisse der
   nächsten 14 Tage: Voll- und Neumond (durch Bisektion der Elongation), Finsternisse, Super- und
   Minimond.
@@ -120,11 +149,14 @@ Abhängigkeiten außer `<cmath>`. TD wird überall mit UT gleichgesetzt (ΔT ≈
 RAM für ein 240×240-Bild mit 16 Bit, deshalb gibt `moonPixel(x, y)` die Farbe eines einzelnen Pixels
 zurück, und der Aufrufer entscheidet, wohin sie geht:
 
-- Display: [Moon.ino](src/Moon.ino) schreibt Pixel für Pixel mit `drawPixel`.
+- Display: [Moon.ino](src/Moon.ino) berechnet eine Zeile innerhalb des Mondkreises und schreibt sie
+  mit `drawRGBBitmap` in einem Block (ein Adressfenster pro Zeile statt pro Pixel).
 - Telegram: [png_stream.cpp](src/png_stream.cpp) holt Zeile für Zeile und sendet sie direkt; der
   JPEG-Encoder fürs Profilbild holt 16×16-Blöcke.
-- Uhren-Modus: [clock_face.cpp](src/clock_face.cpp) verkleinert das Bild auf das Mondsymbol (Mittel aus
-  2×2 Abtastpunkten je Pixel).
+- Uhren-Modus: [clock_face.cpp](src/clock_face.cpp) verkleinert das Bild auf das Mondsymbol mit
+  `moonPixelAveraged()`: Mondrand und Beleuchtung werden an 2×2 Abtastpunkten je Pixel geprüft, die
+  Textur wird nur einmal in der Mitte gelesen (Mittel aus 2×2 Texeln). Auch hier wird zeilenweise
+  geschrieben.
 
 Vorbereitung und Rendern sind getrennt: `prepareMoonRenderAt(utc)` berechnet einmal den Himmelszustand
 und legt Phase, Winkel, Rotationsmatrix und Optionen in statischen Variablen ab. `moonPixel()` nutzt diese
@@ -138,7 +170,9 @@ Pro Pixel wird geprüft:
 2. Ist es beleuchtet? Der Terminator ist eine Ellipse, die mit der Phase skaliert und um den Winkel der
    Maske gedreht ist. Zusammen mit dem Kreis ergibt das die beleuchtete Fläche.
 3. Welche Farbe hat die Textur an dieser Stelle? Mit Libration wird der Punkt auf der Kugel mit der
-   Rotationsmatrix zurückgerechnet und in der NASA-Karte (`lroc`) oder im Foto nachgeschlagen.
+   Rotationsmatrix zurückgerechnet und in der NASA-Karte (`lroc`) oder im Foto nachgeschlagen. Diese
+   Rechnung läuft in `float` (ein Texel entspricht etwa 0,75°) und ohne Normierung, da der gedrehte
+   Vektor bereits die Länge r hat; ohne FPU ist sie trotzdem der teuerste Teil.
 4. Abdunkeln der unbeleuchteten Seite und bläuliche Tönung unter dem Horizont, falls gewählt.
 
 Die Darstellungsoptionen sind ein Bitfeld (siehe [moon_render.h](src/moon_render.h)): abdunkeln,
@@ -165,7 +199,8 @@ Gezeichnet wird inkrementell, weil das komplette Zifferblatt auf dem Gerät spü
   [Telegram.ino](src/Telegram.ino) ab; ändert sich der Zustand, werden nur diese Pixel neu gezeichnet.
 
 Ring und Mondsegment werden pixelweise um den echten Mittelpunkt (119,5 | 119,5) gezeichnet, damit
-sie rund und symmetrisch sind. Dicke Linien setzen sich aus zwei Dreiecken zusammen, weil
+sie rund und symmetrisch sind. Ob ein Pixel im Segment liegt, ergibt sich ohne Winkelfunktion aus den
+Vorzeichen von Kreuz- und Skalarprodukt mit den Grenzstrahlen. Dicke Linien setzen sich aus zwei Dreiecken zusammen, weil
 Adafruit_GFX keine dicken Linien kennt. Senkrechte und waagerechte Linien sind Rechtecke.
 
 ## Telegram und Pushover
@@ -194,7 +229,8 @@ selbst; steht dieselbe `update_id` bei zwei Prüfungen hintereinander an, wird s
 - Antworten gehen an den Chat, aus dem der Befehl kam.
 
 **Täglicher Ablauf zur Berichtszeit** (`configAutoTime`, unabhängig voneinander getrackt, mit
-Wiederholung bei Fehlschlag):
+Wiederholung bei Fehlschlag). Der Bericht wird pro Durchlauf einmal berechnet und an alle fälligen
+Ziele gesendet:
 
 | Ziel | Inhalt | Wiederholung |
 |---|---|---|
@@ -222,7 +258,8 @@ und rufen `saveConfig()`.
 
 | Schlüssel | Bedeutung |
 |---|---|
-| `lat`, `lon` | Standort in Dezimalgrad |
+| `lat`, `lon` | Standort in Dezimalgrad (im RAM als `configLocation`, Typ `astro::GeoLocation`) |
+| `elev` | Höhe über dem Meeresspiegel in Metern |
 | `opts` | Darstellungsoptionen (Bitfeld) |
 | `auto`, `atime` | Tagesbericht ein/aus, Uhrzeit in Minuten nach Mitternacht |
 | `tz` | POSIX-Zeitzone |
@@ -233,8 +270,11 @@ Zugangsdaten (WLAN, Telegram, Pushover) stehen **nicht** im NVS, sondern fest im
 
 ## Speicher und Ressourcen
 
-- Kein Bildpuffer; Pixel werden einzeln berechnet und gezeichnet (siehe oben). Das spart RAM, macht aber
-  das Rendern rechenintensiv.
+- Kein Bildpuffer; Pixel werden einzeln berechnet und zeilenweise gezeichnet (siehe oben). Das spart RAM,
+  macht aber das Rendern rechenintensiv.
+- Der Zwischenspeicher für Mondauf-/-untergang belegt 312 Byte.
+- Die SPI-Übertragung zum Display (40 MHz) ist kein Engpass: Ein ganzes Bild braucht etwa 25–30 ms,
+  die Rechenzeit dominiert.
 - Die Texturen liegen im Flash (`PROGMEM`). Die Partitionstabelle `huge_app.csv` schafft Platz dafür.
 - Das Profil-JPEG belegt kurzzeitig 48 KB Heap, das JPEG-Encoder-Objekt etwa 3 KB (auf dem Heap, nicht
   auf dem Stack).
@@ -245,6 +285,8 @@ Zugangsdaten (WLAN, Telegram, Pushover) stehen **nicht** im NVS, sondern fest im
 Die `.cpp`-Dateien lassen sich ohne Gerät übersetzen. [tools/preview/](tools/preview/) enthält ein
 Programm, das Uhr und Mondbild als PNG ausgibt. Dazu liefert `tools/preview/stub/` einen minimalen
 Ersatz für die Arduino-Header, und `Adafruit_GFX` zeichnet in einen Speicherpuffer statt auf das Display.
+`drawClockFace()` nimmt deshalb ein `ClockDisplay`: auf dem Gerät `Adafruit_SPITFT` (schnelles
+`drawRGBBitmap`), in der Vorschau `Adafruit_GFX`.
 Der Aufruf (`make clock`, `make moon`) steht im [Makefile](Makefile) und in der readme.md.
 
 So lässt sich Zeichencode ändern und prüfen, ohne jedes Mal zu flashen. Der Preview-Code ersetzt
