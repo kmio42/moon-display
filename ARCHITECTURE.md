@@ -97,7 +97,8 @@ die Systemzeit vor 2023. Alle Teile prüfen das (`MIN_VALID_TIME`) und warten.
 
 **[astro.cpp](src/astro.cpp)** enthält die Formeln aus Meeus, *Astronomische Algorithmen*: Julianisches
 Datum, Sternzeit, Sonne, Mond, Parallaxe, Libration, parallaktischer Winkel, Auf- und Untergang der
-Sonne. Es hat keine Abhängigkeiten außer `<cmath>`.
+Sonne, Perigäum und Apogäum des Mondes (Kap. 50) und seine Knotendurchgänge (Kap. 51). Es hat keine
+Abhängigkeiten außer `<cmath>`. TD wird überall mit UT gleichgesetzt (ΔT ≈ 1 min wird vernachlässigt).
 
 **[ephemeris.cpp](src/ephemeris.cpp)** setzt darauf auf und kennt den Standort (`configLatitude`,
 `configLongitude`):
@@ -105,7 +106,8 @@ Sonne. Es hat keine Abhängigkeiten außer `<cmath>`.
 - `computeSky(utc)` liefert einen `SkyState`: Sonne und Mond (der Mond topozentrisch, also
   parallaxenkorrigiert), Azimut und Höhe, Phase, zunehmend oder abnehmend, Positionswinkel `chi` des
   hellen Randes, parallaktischer Winkel `q`, Mondachse und Libration.
-- `eventsForLocalDay()` liefert Auf- und Untergänge von Sonne und Mond als UTC-Zeitpunkte. Der Mond hat
+- `eventsForLocalDay()` liefert Auf- und Untergänge von Sonne und Mond sowie den Meridiandurchgang des
+  Mondes als UTC-Zeitpunkte. Der Mond hat
   keine Meeus-Formel für den Aufgang, deshalb wird seine Höhe stündlich abgetastet und der
   Horizontdurchgang durch quadratische Interpolation bestimmt.
 - `moonOutlookFor()` bestimmt für den Tagesbericht die Kulminationshöhe, die Tendenz und die Ereignisse der

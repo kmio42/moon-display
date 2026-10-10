@@ -26,8 +26,8 @@ struct SkyState {
 // Auf- und Untergänge eines lokalen Kalendertags als UTC-Zeitpunkte.
 struct DayEvents {
     bool sunValid;          // Sonne geht an mindestens einem beteiligten UT-Tag auf/unter
-    bool hasSunrise, hasSunset, hasMoonrise, hasMoonset;
-    time_t sunrise, sunset, moonrise, moonset;
+    bool hasSunrise, hasSunset, hasMoonrise, hasMoonset, hasMoonTransit;
+    time_t sunrise, sunset, moonrise, moonset, moonTransit;  // moonTransit: Meridiandurchgang
 };
 
 // Ausblick für den Tagesbericht: Mondhöhe und Ereignisse der nächsten 14 Tage.

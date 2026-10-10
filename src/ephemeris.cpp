@@ -120,6 +120,7 @@ DayEvents eventsForLocalDay(time_t t, bool withMoon) {
             astro::MoonRiseSet moon = astro::calculateMoonRiseSet(jd0 + 0.5, lon, lat);
             if (moon.hasRise) takeEvent(jd0, moon.riseHours, localDay, e.hasMoonrise, e.moonrise);
             if (moon.hasSet)  takeEvent(jd0, moon.setHours,  localDay, e.hasMoonset,  e.moonset);
+            if (moon.hasTransit) takeEvent(jd0, moon.transitHours, localDay, e.hasMoonTransit, e.moonTransit);
         }
     }
     return e;

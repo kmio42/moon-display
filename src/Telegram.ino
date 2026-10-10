@@ -13,6 +13,8 @@
 #include <UniversalTelegramBot.h>
 #include <JPEGENC.h>
 #include <new>
+#include <algorithm>
+#include <iterator>
 #include <time.h>
 
 #include "astro.h"
@@ -117,10 +119,42 @@ static String formatRa(double rad) {
     return buf;
 }
 
-// Azimut in astro.cpp wird nach Meeus von Süden gezählt; für die Ausgabe ab Norden (N=0°, O=90°).
 static String formatAzimut(double rad) {
     char buf[16];
-    snprintf(buf, sizeof(buf), "%.1f°", fmod(rad * astro::RAD2DEG + 540.0, 360.0));
+    snprintf(buf, sizeof(buf), "%.1f°", fmod(rad * astro::RAD2DEG + 360.0, 360.0));
+    return buf;
+}
+
+// Formatiert einen Winkel klassisch als ±DDD°MM', gerundet auf ganze Bogenminuten.
+// full360: Winkel wird auf 0–360° normiert (Länge, Azimut).
+static String formatDm(double rad, bool sign, bool full360 = false) {
+    double deg = rad * astro::RAD2DEG;
+    if (full360) deg = fmod(fmod(deg, 360.0) + 360.0, 360.0);
+    long minutes = lround(fabs(deg) * 60.0);
+    if (full360) minutes %= 360 * 60;  // 359°59.6' wird zu 0°00'
+    char buf[20];
+    if (sign) {
+        snprintf(buf, sizeof(buf), "%c%ld°%02ld'", deg < 0 && minutes > 0 ? '-' : '+', minutes / 60, minutes % 60);
+    } else {
+        snprintf(buf, sizeof(buf), "%ld°%02ld'", minutes / 60, minutes % 60);
+    }
+    return buf;
+}
+
+// Formatiert eine Rektaszension als HHhMMm, gerundet auf ganze Zeitminuten.
+static String formatHm(double rad) {
+    const double h = fmod(fmod(rad * astro::RAD2DEG / 15.0, 24.0) + 24.0, 24.0);
+    const long minutes = lround(h * 60.0) % (24 * 60);
+    char buf[12];
+    snprintf(buf, sizeof(buf), "%02ldh%02ldm", minutes / 60, minutes % 60);
+    return buf;
+}
+
+// Formatiert einen kleinen Winkel (Monddurchmesser) als MM'SS".
+static String formatArcmin(double rad) {
+    const long seconds = lround(rad * astro::RAD2DEG * 3600.0);
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%ld'%02ld\"", seconds / 60, seconds % 60);
     return buf;
 }
 
@@ -215,25 +249,105 @@ String buildDailyReport() {
     return msg;
 }
 
+// Extremwerte der Mondentfernung im 21. Jahrhundert (gerundet), Grenzen für den Durchmesser
+constexpr double MOON_PERIGEE_MIN = 356400.0;  // km
+constexpr double MOON_APOGEE_MAX  = 406700.0;  // km
+constexpr int    BLOCK_LABEL_WIDTH = 10;       // Zeichen
+
+static double moonDiameter(double distance) {
+    return 2.0 * asin(astro::MOON_RADIUS / distance);
+}
+
+// Lage des Durchmessers zwischen Apogäum (0 %) und Perigäum (100 %) der Extremwerte
+static double diameterPercent(double distance) {
+    const double dMin = moonDiameter(MOON_APOGEE_MAX);
+    const double dMax = moonDiameter(MOON_PERIGEE_MIN);
+    return constrain((moonDiameter(distance) - dMin) / (dMax - dMin) * 100.0, 0.0, 100.0);
+}
+
+// "TT.MM. HH:MM" in Lokalzeit
+static String formatLocalDateTime(time_t t) {
+    return formatLocalDate(t) + " " + formatLocalTime(t);
+}
+
+// Eine Zeile des Festbreiten-Blocks. Die Bezeichnung wird auf BLOCK_LABEL_WIDTH Zeichen aufgefüllt;
+// gezählt werden Zeichen, nicht UTF-8-Bytes (wegen "ö").
+static String blockLine(const char* label, const String& value) {
+    String line = label;
+    int chars = 0;
+    for (const char* p = label; *p; p++) {
+        if ((*p & 0xC0) != 0x80) chars++;
+    }
+    for (; chars < BLOCK_LABEL_WIDTH; chars++) line += ' ';
+    return line + value + "\n";
+}
+
+// Mondkoordinaten wie in einem Sternprogramm, als HTML mit Festbreiten-Block (parse_mode HTML).
 static String buildMoonMessage() {
     struct tm utc;
     if (!currentUtc(utc)) return "Keine gültige Uhrzeit (NTP) verfügbar.";
     SkyState sky = computeSky(utc);
+    const time_t now = time(nullptr);
 
-    char buf[64];
-    String msg = String(moonPhaseEmoji(sky.phase, sky.waxing)) + " Mond – " + formatNow() + "\n\n";
-    msg += "RA / Dek: " + formatRa(sky.moonRaDek.ra) + " / " + formatDeg(sky.moonRaDek.dek) + "\n";
-    snprintf(buf, sizeof(buf), "Ekl. Länge / Breite: %.2f° / ",
-             fmod(sky.moon.longitude * astro::RAD2DEG + 360.0, 360.0));
-    msg += buf + formatDeg(sky.moon.latitude) + "\n";
-    msg += "Azimut / Höhe: " + formatAzimut(sky.moonAzH.azimut) + " / " + formatDeg(sky.moonAzH.height) + "\n";
-    snprintf(buf, sizeof(buf), "Entfernung: %.0f km\n", sky.moon.distance);
-    msg += buf;
-    snprintf(buf, sizeof(buf), "Phase: %s, %.1f %% beleuchtet\n", moonPhaseName(sky.phase, sky.waxing), sky.phase * 100.0);
-    msg += buf;
-    msg += "Libration: Länge " + formatDeg(sky.moonAxle.libration.longitude)
-         + " / Breite " + formatDeg(sky.moonAxle.libration.latitude);
-    return msg;
+    char buf[48];
+    String msg = String(moonPhaseEmoji(sky.phase, sky.waxing)) + " Mond – " + formatNow() + "\n<pre>";
+
+    msg += blockLine("Ekl. L/B", formatDm(sky.moon.longitude, true, true) + "/" + formatDm(sky.moon.latitude, true));
+    msg += blockLine("RA/Dek", formatHm(sky.moonRaDek.ra) + "/" + formatDm(sky.moonRaDek.dek, true));
+    // Azimut nach Meeus von Süden gezählt (S=0°, W=90°)
+    msg += blockLine("Az/Höhe", formatDm(sky.moonAzH.azimut, true, true) + "/" + formatDm(sky.moonAzH.height, true));
+
+    snprintf(buf, sizeof(buf), " (%.0f %%)", diameterPercent(sky.moon.distance));
+    msg += blockLine("Durchm.", formatArcmin(moonDiameter(sky.moon.distance)) + buf);
+
+    // Elongation, Formel 48.2 aus "Astronomische Algorithmen" von Jean Meeus (Breite der Sonne = 0)
+    const double elongation = acos(cos(sky.moon.latitude) * cos(sky.moon.longitude - sky.sunLongitude));
+    msg += blockLine("Elong.", formatDm(elongation, false) + (sky.waxing ? " Ost" : " West"));
+
+    snprintf(buf, sizeof(buf), "%s, %.1f %%", sky.waxing ? "zunehmend" : "abnehmend", sky.phase * 100.0);
+    msg += blockLine("Phase", buf);
+    // calculateMoonAxle() liefert die Libration in Länge nicht normiert
+    msg += blockLine("Librat.", "L " + formatDm(astro::normalizeAngleDifferenceRad(sky.moonAxle.libration.longitude), true)
+                              + " / B " + formatDm(sky.moonAxle.libration.latitude, true));
+
+    // Aufgang, Kulmination und Untergang des lokalen Tages in zeitlicher Reihenfolge,
+    // fehlende Ereignisse am Ende mit "-"
+    const DayEvents today = eventsForLocalDay(now, true);
+    String transitHeight;  // Höhe bei der Kulmination (topozentrisch)
+    if (today.hasMoonTransit) {
+        struct tm transitUtc;
+        gmtime_r(&today.moonTransit, &transitUtc);
+        transitHeight = ", " + formatDm(computeSky(transitUtc).moonAzH.height, true);
+    }
+    struct Event {
+        const char* label;
+        bool valid;
+        time_t time;
+        String suffix;
+    } events[] = {
+        {"Aufgang",   today.hasMoonrise,    today.moonrise,    ""},
+        {"Kulmin.",   today.hasMoonTransit, today.moonTransit, transitHeight},
+        {"Untergang", today.hasMoonset,     today.moonset,     ""},
+    };
+    std::stable_sort(std::begin(events), std::end(events), [](const Event& a, const Event& b) {
+        if (a.valid != b.valid) return a.valid;
+        return a.valid && a.time < b.time;
+    });
+    for (const Event& e : events) {
+        msg += blockLine(e.label, e.valid ? formatLocalTime(e.time) + e.suffix : String("-"));
+    }
+
+    // Nächstes Perigäum/Apogäum mit Lage zwischen den Extremwerten und nächster Knotendurchgang
+    const astro::MoonApsis perigee = astro::calculateNextMoonApsis(sky.jd, astro::MoonApsisType::Perigee);
+    const astro::MoonApsis apogee  = astro::calculateNextMoonApsis(sky.jd, astro::MoonApsisType::Apogee);
+    snprintf(buf, sizeof(buf), " (%.0f %%)", diameterPercent(perigee.distance));
+    msg += blockLine("Perigäum", formatLocalDateTime(timeFromJulianDate(perigee.jde)) + buf);
+    snprintf(buf, sizeof(buf), " (%.0f %%)", diameterPercent(apogee.distance));
+    msg += blockLine("Apogäum", formatLocalDateTime(timeFromJulianDate(apogee.jde)) + buf);
+    const astro::MoonNode node = astro::calculateNextMoonNode(sky.jd);
+    msg += blockLine("Knoten", formatLocalDateTime(timeFromJulianDate(node.jde)) + (node.ascending ? " aufst." : " abst."));
+    msg.remove(msg.length() - 1);  // letzter Zeilenumbruch, sonst Leerzeile im Block
+    return msg + "</pre>";
 }
 
 static String buildSunMessage() {
@@ -598,7 +712,8 @@ static String handleCommand(String text, const String& chatId) {
         return HELP_TEXT;
     }
     if (cmd == "/mond") {
-        return buildMoonMessage();
+        bot.sendMessage(chatId, buildMoonMessage(), "HTML");
+        return "";  // Antwort wurde bereits gesendet (HTML wegen des Festbreiten-Blocks)
     }
     if (cmd == "/bild") {
         sendMoonPhoto(chatId);
