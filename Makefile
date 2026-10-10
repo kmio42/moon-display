@@ -22,7 +22,7 @@ TOOL    := tools/preview
 
 SOURCES := $(TOOL)/preview.cpp $(SRC)/clock_face.cpp $(SRC)/moon_render.cpp $(SRC)/ephemeris.cpp \
            $(SRC)/astro.cpp $(SRC)/png_stream.cpp $(BUILD)/picture.cpp
-CXXFLAGS := -O2 -std=gnu++17 -w -DARDUINO=100 -I$(TOOL)/stub -I$(SRC) -I"$(GFX)"
+CXXFLAGS := -O2 -std=gnu++2b -w -DARDUINO=100 -I$(TOOL)/stub -I$(SRC) -I"$(GFX)"
 
 .PHONY: preview moon clock clean
 

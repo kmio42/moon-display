@@ -247,7 +247,7 @@ bool sameData(const ClockData& a, const ClockData& b) {
 }
 
 // Zeichnet die Pixel zeilenweise in einem Block (setAddrWindow + writePixels) statt einzeln mit drawPixel.
-void drawMoonSymbol(Adafruit_SPITFT* tft, time_t now) {
+void drawMoonSymbol(ClockDisplay* tft, time_t now) {
     struct tm utc;
     gmtime_r(&now, &utc);
     prepareMoonRenderAt(utc);
@@ -422,7 +422,7 @@ ClockData computeClockData(time_t now) {
     return d;
 }
 
-void drawClockFace(Adafruit_SPITFT* gfx, time_t now) {
+void drawClockFace(ClockDisplay* gfx, time_t now) {
     const ClockData d = computeClockData(now);
     const float nowHours = localHours(now);
     const bool moonUp = moonAboveHorizon(now);

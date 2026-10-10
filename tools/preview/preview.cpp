@@ -17,11 +17,14 @@
 #include "moon_render.h"
 #include "png_stream.h"
 
-// Konfiguration, die auf dem Gerät aus Config.ino kommt
-double configLatitude  = 49.87;
-double configLongitude = 8.65;
+// Konfiguration, die auf dem Gerät aus Config.ino kommt (Standard: Darmstadt)
+astro::GeoLocation configLocation = {
+    .longitude = astro::Angle::fromDeg(8.65),
+    .latitude  = astro::Angle::fromDeg(49.87),
+    .elevation = 0.0,
+    .timezone  = "CET-1CEST,M3.5.0,M10.5.0/3",
+};
 int    configDisplayOptions = 13;
-static std::string tzName = "CET-1CEST,M3.5.0,M10.5.0/3";
 
 static bool telegramLost = false;
 bool telegramConnectionLost() {
@@ -62,6 +65,7 @@ static void usage() {
         "  -u, --utc                       --time ist UTC statt Lokalzeit\n"
         "  -o, --options N                 Display-Optionen als Bitmaske (Standard 13)\n"
         "      --lat B --lon L             Standort in Dezimalgrad (Standard Darmstadt)\n"
+        "      --elev H                    Höhe über dem Meeresspiegel in m (Standard 0)\n"
         "      --tz POSIX-TZ               Zeitzone (Standard CET-1CEST,M3.5.0,M10.5.0/3)\n"
         "      --square                    clock: keine runde Maske außen\n"
         "      --no-telegram               clock: Telegram-Verbindung fehlt (weiße Markierung)\n"
@@ -81,15 +85,16 @@ int main(int argc, char** argv) {
         if ((a == "-t" || a == "--time") && hasValue)      timeText = argv[++i];
         else if (a == "-u" || a == "--utc")                utc = true;
         else if ((a == "-o" || a == "--options") && hasValue) configDisplayOptions = atoi(argv[++i]);
-        else if (a == "--lat" && hasValue)                 configLatitude = atof(argv[++i]);
-        else if (a == "--lon" && hasValue)                 configLongitude = atof(argv[++i]);
-        else if (a == "--tz" && hasValue)                  tzName = argv[++i];
+        else if (a == "--lat" && hasValue)                 configLocation.latitude = astro::Angle::fromDeg(atof(argv[++i]));
+        else if (a == "--lon" && hasValue)                 configLocation.longitude = astro::Angle::fromDeg(atof(argv[++i]));
+        else if (a == "--elev" && hasValue)                configLocation.elevation = atof(argv[++i]);
+        else if (a == "--tz" && hasValue)                  snprintf(configLocation.timezone, sizeof(configLocation.timezone), "%s", argv[++i]);
         else if (a == "--square")                          roundMask = false;
         else if (a == "--no-telegram")                     telegramLost = true;
         else if ((a == "-f" || a == "--file") && hasValue) file = argv[++i];
         else { usage(); return 1; }
     }
-    setenv("TZ", tzName.c_str(), 1);
+    setenv("TZ", configLocation.timezone, 1);
     tzset();
 
     time_t now = time(nullptr);
