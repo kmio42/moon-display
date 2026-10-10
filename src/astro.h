@@ -128,6 +128,21 @@ double calculateMoonPhase(const RaDek& sunRaDek, double sunDistance,
 MoonAxle calculateMoonAxle(double jd, const MoonPosition& moon);
 MoonRiseSet calculateMoonRiseSet(double jd, double longitude, double latitude);
 
+// Perigäum/Apogäum des Mondes (Meeus Kap. 50)
+enum class MoonApsisType { Perigee, Apogee };
+struct MoonApsis {
+    double jde;       // Zeitpunkt; TD wird wie im übrigen Code mit UT gleichgesetzt
+    double distance;  // Entfernung Erde–Mond in km
+};
+MoonApsis calculateNextMoonApsis(double jd, MoonApsisType type);
+
+// Knotendurchgang des Mondes durch die Ekliptik (Meeus Kap. 51)
+struct MoonNode {
+    double jde;
+    bool ascending;   // true: aufsteigender Knoten (Breite wird positiv)
+};
+MoonNode calculateNextMoonNode(double jd);
+
 // Matrix-Operationen
 Mat3 createRotationMatrix(const Vec3& axle, double angle);
 Mat3 multiplyMatrix(const Mat3& m1, const Mat3& m2);

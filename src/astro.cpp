@@ -723,6 +723,172 @@ double calculateRisingKnotMoon(double jd) {
     return normalizeAngleDegree(risingKnot) * DEG2RAD;
 }
 
+// ---------------------------------------------------------------
+//  Perigäum / Apogäum und Knotendurchgänge des Mondes
+// ---------------------------------------------------------------
+
+// Periodischer Term a·sin(nD·D + nM·M + nF·F) bzw. mit cos, a = a0 + aT·T
+struct ApsisTerm {
+    double a0, aT;
+    int8_t nD, nM, nF;
+};
+
+// Tabellen 50.A und 50.B aus "Astronomische Algorithmen" von Jean Meeus
+static const ApsisTerm PERIGEE_TIME[] = {
+    {-1.6769, 0, 2, 0, 0}, {0.4589, 0, 4, 0, 0}, {-0.1856, 0, 6, 0, 0}, {0.0883, 0, 8, 0, 0},
+    {-0.0773, 0.00019, 2, -1, 0}, {0.0502, -0.00013, 0, 1, 0}, {-0.0460, 0, 10, 0, 0},
+    {0.0422, -0.00011, 4, -1, 0}, {-0.0256, 0, 6, -1, 0}, {0.0253, 0, 12, 0, 0}, {0.0237, 0, 1, 0, 0},
+    {0.0162, 0, 8, -1, 0}, {-0.0145, 0, 14, 0, 0}, {0.0129, 0, 0, 0, 2}, {-0.0112, 0, 3, 0, 0},
+    {-0.0104, 0, 10, -1, 0}, {0.0086, 0, 16, 0, 0}, {0.0069, 0, 12, -1, 0}, {0.0066, 0, 5, 0, 0},
+    {-0.0053, 0, 2, 0, 2}, {-0.0052, 0, 18, 0, 0}, {-0.0046, 0, 14, -1, 0}, {-0.0041, 0, 7, 0, 0},
+    {0.0040, 0, 2, 1, 0}, {0.0032, 0, 20, 0, 0}, {-0.0032, 0, 1, 1, 0}, {0.0031, 0, 16, -1, 0},
+    {-0.0029, 0, 4, 1, 0}, {0.0027, 0, 9, 0, 0}, {0.0027, 0, 4, 0, 2}, {-0.0027, 0, 2, -2, 0},
+    {0.0024, 0, 4, -2, 0}, {-0.0021, 0, 6, -2, 0}, {-0.0021, 0, 22, 0, 0}, {-0.0021, 0, 18, -1, 0},
+    {0.0019, 0, 6, 1, 0}, {-0.0018, 0, 11, 0, 0}, {-0.0014, 0, 8, 1, 0}, {-0.0014, 0, 4, 0, -2},
+    {-0.0014, 0, 6, 0, 2}, {0.0014, 0, 3, 1, 0}, {-0.0014, 0, 5, 1, 0}, {0.0013, 0, 13, 0, 0},
+    {0.0013, 0, 20, -1, 0}, {0.0011, 0, 3, 2, 0}, {-0.0011, 0, 4, -2, 2}, {-0.0010, 0, 1, 2, 0},
+    {-0.0009, 0, 22, -1, 0}, {-0.0008, 0, 0, 0, 4}, {0.0008, 0, 6, 0, -2}, {0.0008, 0, 2, 1, -2},
+    {0.0007, 0, 0, 2, 0}, {0.0007, 0, 0, -1, 2}, {0.0007, 0, 2, 0, 4}, {-0.0006, 0, 0, -2, 2},
+    {-0.0006, 0, 2, 2, -2}, {0.0006, 0, 24, 0, 0}, {0.0005, 0, 4, 0, -4}, {0.0005, 0, 2, 2, 0},
+    {-0.0004, 0, 1, -1, 0},
+};
+
+static const ApsisTerm APOGEE_TIME[] = {
+    {0.4392, 0, 2, 0, 0}, {0.0684, 0, 4, 0, 0}, {0.0456, -0.00011, 0, 1, 0},
+    {0.0426, -0.00011, 2, -1, 0}, {0.0212, 0, 0, 0, 2}, {-0.0189, 0, 1, 0, 0}, {0.0144, 0, 6, 0, 0},
+    {0.0113, 0, 4, -1, 0}, {0.0047, 0, 2, 0, 2}, {0.0036, 0, 1, 1, 0}, {0.0035, 0, 8, 0, 0},
+    {0.0034, 0, 6, -1, 0}, {-0.0034, 0, 2, 0, -2}, {0.0022, 0, 2, -2, 0}, {-0.0017, 0, 3, 0, 0},
+    {0.0013, 0, 4, 0, 2}, {0.0011, 0, 8, -1, 0}, {0.0010, 0, 4, -2, 0}, {0.0009, 0, 10, 0, 0},
+    {0.0007, 0, 3, 1, 0}, {0.0006, 0, 0, 2, 0}, {0.0005, 0, 2, 1, 0}, {0.0005, 0, 2, 2, 0},
+    {0.0004, 0, 6, 0, 2}, {0.0004, 0, 6, -2, 0}, {0.0004, 0, 10, -1, 0}, {-0.0004, 0, 5, 0, 0},
+    {-0.0004, 0, 4, 0, -2}, {0.0003, 0, 0, 1, 2}, {0.0003, 0, 12, 0, 0}, {0.0003, 0, 2, -1, 2},
+    {-0.0003, 0, 1, -1, 0},
+};
+
+// Äquatoriale Horizontalparallaxe in Bogensekunden (Kosinus-Terme)
+static const ApsisTerm PERIGEE_PARALLAX[] = {
+    {3629.215, 0, 0, 0, 0}, {63.224, 0, 2, 0, 0}, {-6.990, 0, 4, 0, 0}, {2.834, -0.0071, 2, -1, 0},
+    {1.927, 0, 6, 0, 0}, {-1.263, 0, 1, 0, 0}, {-0.702, 0, 8, 0, 0}, {0.696, -0.0017, 0, 1, 0},
+    {-0.690, 0, 0, 0, 2}, {-0.629, 0.0016, 4, -1, 0}, {-0.392, 0, 2, 0, -2}, {0.297, 0, 10, 0, 0},
+    {0.260, 0, 6, -1, 0}, {0.201, 0, 3, 0, 0}, {-0.161, 0, 2, 1, 0}, {0.157, 0, 1, 1, 0},
+    {-0.138, 0, 12, 0, 0}, {-0.127, 0, 8, -1, 0}, {0.104, 0, 2, 0, 2}, {0.104, 0, 2, -2, 0},
+    {-0.079, 0, 5, 0, 0}, {0.068, 0, 14, 0, 0}, {0.067, 0, 10, -1, 0}, {0.054, 0, 4, 1, 0},
+    {-0.038, 0, 12, -1, 0}, {-0.038, 0, 4, -2, 0}, {0.037, 0, 7, 0, 0}, {-0.037, 0, 4, 0, 2},
+    {-0.035, 0, 16, 0, 0}, {-0.030, 0, 3, 1, 0}, {0.029, 0, 1, -1, 0}, {-0.025, 0, 6, 1, 0},
+    {0.023, 0, 0, 2, 0}, {0.023, 0, 14, -1, 0}, {-0.023, 0, 2, 2, 0}, {0.022, 0, 6, -2, 0},
+    {-0.021, 0, 2, -1, -2}, {-0.020, 0, 9, 0, 0}, {0.019, 0, 18, 0, 0}, {0.017, 0, 6, 0, 2},
+    {0.014, 0, 0, -1, 2}, {-0.014, 0, 16, -1, 0}, {0.013, 0, 4, 0, -2}, {0.012, 0, 8, 1, 0},
+    {0.011, 0, 11, 0, 0}, {0.010, 0, 5, 1, 0}, {-0.010, 0, 20, 0, 0},
+};
+
+static const ApsisTerm APOGEE_PARALLAX[] = {
+    {3245.251, 0, 0, 0, 0}, {-9.147, 0, 2, 0, 0}, {-0.841, 0, 1, 0, 0}, {0.697, 0, 0, 0, 2},
+    {-0.656, 0.0016, 0, 1, 0}, {0.355, 0, 4, 0, 0}, {0.159, 0, 2, -1, 0}, {0.127, 0, 1, 1, 0},
+    {0.065, 0, 4, -1, 0}, {0.052, 0, 6, 0, 0}, {0.043, 0, 2, 1, 0}, {0.031, 0, 2, 0, 2},
+    {-0.023, 0, 2, 0, -2}, {0.022, 0, 2, -2, 0}, {0.019, 0, 2, 2, 0}, {-0.016, 0, 0, 2, 0},
+    {0.014, 0, 6, -1, 0}, {0.010, 0, 8, 0, 0},
+};
+
+template <size_t N>
+static double sumApsisTerms(const ApsisTerm (&terms)[N], double T, double D, double M, double F, bool useCos) {
+    double sum = 0;
+    for (const ApsisTerm& t : terms) {
+        const double arg = t.nD * D + t.nM * M + t.nF * F;
+        sum += (t.a0 + t.aT * T) * (useCos ? cos(arg) : sin(arg));
+    }
+    return sum;
+}
+
+// Perigäum (k ganzzahlig) oder Apogäum (k + 0,5) nach Meeus, Kapitel 50.
+static MoonApsis moonApsisForK(double k, MoonApsisType type) {
+    const double T = k / 1325.55;
+    const double T2 = T * T, T3 = T2 * T, T4 = T3 * T;
+    const double jdeMean = 2451534.6698 + 27.55454989 * k - 0.0006691 * T2 - 0.000001098 * T3
+                         + 0.0000000052 * T4;
+    const double D = (171.9179 + 335.9106046 * k - 0.0100383 * T2 - 0.00001156 * T3 + 0.000000055 * T4) * DEG2RAD;
+    const double M = (347.3477 + 27.1577721 * k - 0.0008130 * T2 - 0.0000010 * T3) * DEG2RAD;
+    const double F = (316.6109 + 364.5287911 * k - 0.0125053 * T2 - 0.0000148 * T3) * DEG2RAD;
+
+    const bool perigee = type == MoonApsisType::Perigee;
+    const double jde = jdeMean + (perigee ? sumApsisTerms(PERIGEE_TIME, T, D, M, F, false)
+                                          : sumApsisTerms(APOGEE_TIME, T, D, M, F, false));
+    const double parallax = (perigee ? sumApsisTerms(PERIGEE_PARALLAX, T, D, M, F, true)
+                                     : sumApsisTerms(APOGEE_PARALLAX, T, D, M, F, true)) / 3600.0 * DEG2RAD;
+    return {jde, EARTH_RADIUS / sin(parallax)};
+}
+
+/**
+ * Berechnet das erste Perigäum bzw. Apogäum des Mondes nach jd.
+ * Meeus gibt die Genauigkeit des Zeitpunkts mit bis zu 31 min (Perigäum) bzw. 3 min (Apogäum) an.
+ * @param jd Julianisches Datum
+ * @param type Perigäum oder Apogäum
+ * @return Zeitpunkt (JDE) und Entfernung in km
+ */
+MoonApsis calculateNextMoonApsis(double jd, MoonApsisType type) {
+    // k zählt die anomalistischen Monate ab dem Perigäum 22.12.1999 (Formel 50.2 nach dem Datum umgestellt)
+    double k = floor((jd - 2451534.6698) / 27.55454989) - 1;
+    if (type == MoonApsisType::Apogee) k += 0.5;
+    MoonApsis apsis = moonApsisForK(k, type);
+    while (apsis.jde <= jd) {
+        k += 1;
+        apsis = moonApsisForK(k, type);
+    }
+    return apsis;
+}
+
+// Knotendurchgang (k ganzzahlig: aufsteigend, k + 0,5: absteigend) nach Meeus, Kapitel 51.
+static double moonNodeForK(double k) {
+    const double T = k / 1342.23;
+    const double T2 = T * T, T3 = T2 * T, T4 = T3 * T;
+    const double D  = (183.6380 + 331.73735682 * k + 0.0014852 * T2 + 0.00000209 * T3 - 0.000000010 * T4) * DEG2RAD;
+    const double M  = (17.4006 + 26.8203725 * k + 0.0001186 * T2 + 0.00000006 * T3) * DEG2RAD;
+    const double Mp = (38.3776 + 355.52747313 * k + 0.0123499 * T2 + 0.000014627 * T3 - 0.000000069 * T4) * DEG2RAD;
+    const double O  = (123.9767 - 1.44098956 * k + 0.0020608 * T2 + 0.00000214 * T3 - 0.000000016 * T4) * DEG2RAD;
+    const double V  = (299.75 + 132.85 * T - 0.009173 * T2) * DEG2RAD;
+    const double P  = O + (272.75 - 2.3 * T) * DEG2RAD;
+    const double E  = 1 - 0.002516 * T - 0.0000074 * T2;
+
+    return 2451565.1619 + 27.212220817 * k + 0.0002762 * T2 + 0.000000021 * T3 - 0.000000000088 * T4
+         - 0.4721 * sin(Mp)
+         - 0.1649 * sin(2 * D)
+         - 0.0868 * sin(2 * D - Mp)
+         + 0.0084 * sin(2 * D + Mp)
+         - 0.0083 * sin(2 * D - M) * E
+         - 0.0039 * sin(2 * D - M - Mp) * E
+         + 0.0034 * sin(2 * Mp)
+         - 0.0031 * sin(2 * D - 2 * Mp)
+         + 0.0030 * sin(2 * D + M) * E
+         + 0.0028 * sin(M - Mp) * E
+         + 0.0026 * sin(M) * E
+         + 0.0025 * sin(4 * D)
+         + 0.0024 * sin(D)
+         + 0.0022 * sin(M + Mp) * E
+         + 0.0017 * sin(O)
+         + 0.0014 * sin(4 * D - Mp)
+         + 0.0005 * sin(2 * D + M - Mp) * E
+         + 0.0004 * sin(2 * D - M + Mp) * E
+         - 0.0003 * sin(2 * D - 2 * M) * E
+         + 0.0003 * sin(4 * D - M) * E
+         + 0.0003 * sin(V)
+         + 0.0003 * sin(P);
+}
+
+/**
+ * Berechnet den ersten Durchgang des Mondes durch einen Knoten seiner Bahn nach jd.
+ * @param jd Julianisches Datum
+ * @return Zeitpunkt (JDE) und Art des Knotens
+ */
+MoonNode calculateNextMoonNode(double jd) {
+    // k zählt die drakonitischen Monate ab dem aufsteigenden Knoten 2000 (Formel 51.1 nach dem Datum umgestellt)
+    double k = floor((jd - 2451565.1619) / 27.212220817) - 1;
+    double jde = moonNodeForK(k);
+    while (jde <= jd) {
+        k += 0.5;
+        jde = moonNodeForK(k);
+    }
+    return {jde, k == floor(k)};
+}
+
 /**
  * Berechnet die Mondphase basierend auf Sonne und Mond Positionen.
  * @param sunRaDek Äquatoriale Koordinaten der Sonne
