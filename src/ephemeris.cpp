@@ -34,15 +34,17 @@ SkyState computeSky(const struct tm& utc) {
     s.siderealTime = s.gmstHours * M_PI / 12.0 + configLongitude * astro::DEG2RAD;
 
     // ── Sonnenposition ───────────────────────────────────────────────────────
+    const double eps = astro::calculateObliquity(s.jd);
     s.sunLongitude = astro::calculateSunLongitude(s.jd);
-    s.sunRaDek     = astro::calculateEquatorial(s.sunLongitude, 0.0);
+    s.sunRaDek     = astro::calculateEquatorial(s.sunLongitude, 0.0, eps);
     s.sunAzH       = astro::calculateHorizontal(s.sunRaDek, s.siderealTime, latitude);
-    double sunDistance = 149597870;  // in km (1 AE)
+    const double sunDistance = astro::calculateEarthSunDistance(s.jd) * astro::AU_KM;  // [km]
 
     // ── Mondposition ─────────────────────────────────────────────────────────
     s.moon = astro::calculateMoonPosition(s.jd);
-    s.moonRaDek = astro::calculateEquatorial(s.moon.longitude, s.moon.latitude);
-    double moonParallax = asin(6378.14 / s.moon.distance);
+    s.moonRaDek = astro::calculateEquatorial(s.moon.longitude, s.moon.latitude, eps);
+    // Äquatoriale Horizontalparallaxe [rad], Kapitel 45
+    const double moonParallax = asin(astro::EARTH_RADIUS / s.moon.distance);
     s.moonRaDek = astro::calculateTopocentric(s.moonRaDek, moonParallax, s.siderealTime, latitude);
     s.moonAzH   = astro::calculateHorizontal(s.moonRaDek, s.siderealTime, latitude);
 
@@ -152,9 +154,10 @@ static double culminationHeight(time_t t) {
         if (moon.hasTransit) takeEvent(jd0, moon.transitHours, localDay, found, transit);
     }
 
-    const astro::MoonPosition moon = astro::calculateMoonPosition(transit / 86400.0 + 2440587.5);
-    const double dek = astro::calculateEquatorial(moon.longitude, moon.latitude).dec;
-    return M_PI / 2 - fabs(lat - dek);
+    const double jdTransit = transit / 86400.0 + 2440587.5;
+    const astro::MoonPosition moon = astro::calculateMoonPosition(jdTransit);
+    const double dec = astro::calculateEquatorial(moon.longitude, moon.latitude, astro::calculateObliquity(jdTransit)).dec;
+    return M_PI / 2 - fabs(lat - dec);
 }
 
 // Elongation des Mondes (ekliptikale Länge Mond − Sonne), -π..π

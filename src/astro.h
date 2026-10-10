@@ -20,10 +20,10 @@
  * 13  Der parallaktische Winkel                    13.1                      calculateParallacticAngle
  * 14  Aufgang, Durchgang, Untergang (Sonne; h0)    14.1, 14.2                calculateSunriseSunset
  * 21  Schiefe der Ekliptik (ohne Nutation)         21.2                      calculateObliquity
- * 24  Koordinaten der Sonne (niedrige Genauigk.)   24.1–24.5                 calculateSunLongitude, …
+ * 24  Koordinaten der Sonne (niedrige Genauigk.)   24.1–24.5                 calculateSunLongitude, calculateEarthSunDistance
  * 26  Äquinoktien und Solstitien                   Tab. 26.2, 26.3           calculateEquinoxSolstice
- * 27  Zeitgleichung (ohne Nutation)                27.1                      calculateEquationOfTime
- * 29  Keplergleichung                              29.1, 29.3, 29.5          calculateEarthTrueAnomaly, calculateEarthSunDistance
+ * 27  Zeitgleichung (ohne Nutation)                27.1, 27.2                calculateEquationOfTime
+ * 29  Keplergleichung                              29.1, 29.5                calculateEarthTrueAnomaly
  * 37  Planeten in Perihel und Aphel (nur Erde)                               calculateEarthApsis
  * 39  Parallaxe                                    39.2, 39.3                calculateTopocentric
  * 45  Die Mondposition                             45.1–45.7, Tab. 45.1/45.2 calculateMoonPosition, calculateMoonAscendingNode
@@ -67,10 +67,8 @@ constexpr double DEG2RAD = M_PI / 180.0;               // Umrechnung Grad → Ra
 constexpr double RAD2DEG = 180.0 / M_PI;               // Umrechnung Radiant → Grad [°/rad]
 
 constexpr double AU_KM = 149597870.7;                  // Astronomische Einheit [km]
-constexpr double ECCENTRICITY = 0.016708634;           // Exzentrizität der Erdbahn J2000 [1]
 constexpr double EARTH_SEMI_MAJOR_AXIS = 1.000001018;  // Große Halbachse der Erdbahn [AE], Formel 24.5
-constexpr double OBLIQUITY_J2000 = 23.439292;          // Mittlere Schiefe der Ekliptik J2000 [°]
-constexpr double EARTH_RADIUS = 6378.137;              // Äquatorradius der Erde [km]
+constexpr double EARTH_RADIUS = 6378.14;               // Äquatorradius der Erde [km], Kapitel 10 und 45
 constexpr double MOON_RADIUS = 1738.1;                 // Mondradius [km]
 constexpr double MOON_ORBIT_RADIUS = 384400.0;         // Mittlere Entfernung Erde–Mond [km]
 
@@ -175,12 +173,12 @@ double calculateGreenwichSiderealTime(double jd);       // Mittlere Sternzeit Gr
 double calculateObliquity(double jd);                   // Mittlere Schiefe der Ekliptik ε0 [rad]
 double calculateSunLongitude(double jd);                // Wahre geometrische Länge der Sonne [rad]
 double calculateEarthTrueAnomaly(double jd);            // Wahre Anomalie der Erde ν [rad]
-double calculateEarthSunDistance(double nu);            // Abstand Erde–Sonne [AE]
+double calculateEarthSunDistance(double jd);            // Abstand Erde–Sonne R [AE]
 double calculateEarthEccentricity(double jd);           // Exzentrizität der Erdbahn [1]
 double calculateEquationOfTime(double jd, bool withEarthTilt);  // Zeitgleichung [min]
 
 // Koordinatentransformation (Winkel [rad], Sternzeit als lokale Sternzeit θ [rad])
-Equatorial calculateEquatorial(double eclipticalLongitude, double eclipticalLatitude);
+Equatorial calculateEquatorial(double eclipticalLongitude, double eclipticalLatitude, double eps);
 Horizontal calculateHorizontal(const Equatorial& equ, double localSiderealTime, double latitude);
 double calculateParallacticAngle(const Equatorial& equ, double localSiderealTime, double latitude);
 Equatorial calculateTopocentric(const Equatorial& equ, double parallax, double localSiderealTime, double latitude);
