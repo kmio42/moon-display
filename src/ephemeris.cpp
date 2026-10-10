@@ -4,8 +4,7 @@
 #include <cmath>
 
 // Standort – persistent in Config.ino
-extern double configLatitude;
-extern double configLongitude;
+extern astro::GeoLocation configLocation;
 // Umrechnung in Lokalzeit (Config.ino)
 extern void utcToLocal(time_t t, struct tm& out);
 
@@ -25,13 +24,13 @@ time_t timeFromJulianDate(double jd) {
 
 SkyState computeSky(const struct tm& utc) {
     SkyState s;
-    const double latitude = configLatitude * astro::DEG2RAD;
+    const double latitude = configLocation.latitude;
 
     s.jd = julianDateFromTm(utc);
 
     // Lokale Sternzeit in Radiant (GMST + Längengrad-Offset)
     s.gmstHours    = astro::calculateGreenwichSiderealTime(s.jd);
-    s.siderealTime = s.gmstHours * M_PI / 12.0 + configLongitude * astro::DEG2RAD;
+    s.siderealTime = astro::calculateLocalSiderealTime(s.jd, configLocation);
 
     // ── Sonnenposition ───────────────────────────────────────────────────────
     const double eps = astro::calculateObliquity(s.jd);
@@ -93,8 +92,6 @@ static double utMidnight(time_t t) {
 // Gerechnet wird in UT: Ein lokaler Tag überdeckt bis zu zwei UT-Tage, deren Ereignisse
 // nach Umrechnung in Lokalzeit gefiltert werden.
 DayEvents eventsForLocalDay(time_t t, bool withMoon) {
-    const double lat = configLatitude  * astro::DEG2RAD;
-    const double lon = configLongitude * astro::DEG2RAD;
 
     struct tm lt;
     utcToLocal(t, lt);
@@ -108,12 +105,12 @@ DayEvents eventsForLocalDay(time_t t, bool withMoon) {
 
     DayEvents e = {};
     for (double jd0 = jdFirst; jd0 <= jdLast + 0.1; jd0 += 1.0) {
-        const astro::RiseTransitSet sun = astro::calculateSunRiseSet(jd0 + 0.5, lon, lat);
+        const astro::RiseTransitSet sun = astro::calculateSunRiseSet(jd0 + 0.5, configLocation);
         if (sun.hasRise || sun.hasSet) e.sunValid = true;
         if (sun.hasRise) takeEvent(jd0, sun.rise, localDay, e.hasSunrise, e.sunrise);
         if (sun.hasSet)  takeEvent(jd0, sun.set,  localDay, e.hasSunset,  e.sunset);
         if (withMoon) {
-            const astro::RiseTransitSet moon = astro::calculateMoonRiseSet(jd0 + 0.5, lon, lat);
+            const astro::RiseTransitSet moon = astro::calculateMoonRiseSet(jd0 + 0.5, configLocation);
             if (moon.hasRise)    takeEvent(jd0, moon.rise,    localDay, e.hasMoonrise,    e.moonrise);
             if (moon.hasSet)     takeEvent(jd0, moon.set,     localDay, e.hasMoonset,     e.moonset);
             if (moon.hasTransit) takeEvent(jd0, moon.transit, localDay, e.hasMoonTransit, e.moonTransit);
@@ -133,8 +130,6 @@ constexpr double OUTLOOK_DAYS         = 14.0;
 
 // Kulminationshöhe (geozentrisch) des Mondes am lokalen Kalendertag, der t enthält.
 static double culminationHeight(time_t t) {
-    const double lat = configLatitude  * astro::DEG2RAD;
-    const double lon = configLongitude * astro::DEG2RAD;
 
     struct tm lt;
     utcToLocal(t, lt);
@@ -147,14 +142,14 @@ static double culminationHeight(time_t t) {
     const double jdFirst = utMidnight(dayStart - 3600);
     const double jdLast  = utMidnight(dayStart + 86400 + 3600);
     for (double jd0 = jdFirst; jd0 <= jdLast + 0.1; jd0 += 1.0) {
-        const astro::RiseTransitSet moon = astro::calculateMoonRiseSet(jd0 + 0.5, lon, lat);
+        const astro::RiseTransitSet moon = astro::calculateMoonRiseSet(jd0 + 0.5, configLocation);
         if (moon.hasTransit) takeEvent(jd0, moon.transit, localDay, found, transit);
     }
 
     const double jdTransit = transit / 86400.0 + 2440587.5;
     const astro::Ecliptic moon = astro::calculateMoonPosition(jdTransit);
     const double dec = astro::calculateEquatorial(moon, astro::calculateObliquity(jdTransit)).dec;
-    return M_PI / 2 - fabs(lat - dec);
+    return M_PI / 2 - fabs(configLocation.latitude - dec);
 }
 
 // Elongation des Mondes (ekliptikale Länge Mond − Sonne), -π..π
@@ -189,7 +184,7 @@ static bool findElongation(double jdStart, double jdEnd, double target, double& 
 
 MoonOutlook moonOutlookFor(time_t t) {
     MoonOutlook o = {};
-    const double lat = configLatitude * astro::DEG2RAD;
+    const double lat = configLocation.latitude;
 
     // Höhenbereich am Standort bei maximaler Monddeklination
     const double hA = M_PI / 2 - fabs(lat - MOON_MAX_DECLINATION);

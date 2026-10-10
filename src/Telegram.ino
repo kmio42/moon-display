@@ -5,7 +5,7 @@
  * TELEGRAM_GROUP_ID. In die Gruppe postet der Bot außerdem den Tagesbericht und setzt das Mondbild
  * als Gruppenbild.
  * Der Tagesbericht geht an Telegram und/oder Pushover (Pushover.ino), je nachdem was konfiguriert ist.
- * Alle Berechnungen laufen in UT, erst die Ausgabe wird in Lokalzeit (configTimezone) umgerechnet.
+ * Alle Berechnungen laufen in UT, erst die Ausgabe wird in Lokalzeit (configLocation.timezone) umgerechnet.
  */
 
 #include <WiFi.h>
@@ -35,12 +35,10 @@
 #endif
 
 // Persistente Konfiguration (definiert in Config.ino)
-extern double configLatitude;
-extern double configLongitude;
+extern astro::GeoLocation configLocation;
 extern int    configDisplayOptions;
 extern bool   configAutoMode;
 extern int    configAutoTime;
-extern String configTimezone;
 extern void   saveConfig();
 extern void   utcToLocal(time_t t, struct tm& out);
 extern bool   isValidTimezone(const char* tz);
@@ -363,7 +361,8 @@ static String buildSunMessage() {
 static String buildConfigMessage() {
     char buf[96];
     String msg = "⚙️ Konfiguration\n\n";
-    snprintf(buf, sizeof(buf), "Standort: %.6f / %.6f\n", configLatitude, configLongitude);
+    snprintf(buf, sizeof(buf), "Standort: %.6f / %.6f\n",
+             configLocation.latitude * astro::RAD2DEG, configLocation.longitude * astro::RAD2DEG);
     msg += buf;
     snprintf(buf, sizeof(buf), "Optionen: %d\n", configDisplayOptions);
     msg += buf;
@@ -384,7 +383,7 @@ static String buildConfigMessage() {
     msg += buf;
     msg += String("Gruppe: ") + (groupEnabled() ? TELEGRAM_GROUP_ID : "nicht konfiguriert") + "\n";
     msg += String("Pushover: ") + (pushoverEnabled() ? "an" : "nicht konfiguriert") + "\n";
-    msg += "Zeitzone: " + configTimezone + "\n";
+    msg += "Zeitzone: " + String(configLocation.timezone) + "\n";
     msg += String("Anzeige: ") + displayModeName() + "\n";
     msg += "Lokalzeit: " + formatNow();
     return msg;
@@ -751,12 +750,12 @@ static String handleCommand(String text, const String& chatId) {
         if (endLat == s || endLon == endLat || lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) {
             return "Ungültige Werte. Erwartet: /standort <lat> <lon>\nLat: -90..90, Lon: -180..180";
         }
-        configLatitude  = lat;
-        configLongitude = lon;
+        configLocation.latitude  = lat * astro::DEG2RAD;
+        configLocation.longitude = lon * astro::DEG2RAD;
         saveConfig();
         requestRedraw();
         char buf[64];
-        snprintf(buf, sizeof(buf), "Standort gespeichert: %.6f / %.6f", configLatitude, configLongitude);
+        snprintf(buf, sizeof(buf), "Standort gespeichert: %.6f / %.6f", lat, lon);
         return buf;
     }
     if (cmd == "/optionen") {
@@ -812,16 +811,16 @@ static String handleCommand(String text, const String& chatId) {
     }
     if (cmd == "/zeitzone") {
         if (args.length() == 0) {
-            return "Zeitzone: " + configTimezone + "\nErwartet: /zeitzone <POSIX-TZ>, z. B. CET-1CEST,M3.5.0,M10.5.0/3";
+            return "Zeitzone: " + String(configLocation.timezone) + "\nErwartet: /zeitzone <POSIX-TZ>, z. B. CET-1CEST,M3.5.0,M10.5.0/3";
         }
         if (!isValidTimezone(args.c_str())) {
             return "Ungültige Zeitzone. Beispiel: CET-1CEST,M3.5.0,M10.5.0/3";
         }
-        configTimezone = args;
+        strlcpy(configLocation.timezone, args.c_str(), sizeof(configLocation.timezone));
         saveConfig();
         resetAutoReportDay();
         requestRedraw();
-        return "Zeitzone gespeichert: " + configTimezone + "\nLokalzeit: " + formatNow();
+        return "Zeitzone gespeichert: " + String(configLocation.timezone) + "\nLokalzeit: " + formatNow();
     }
     return "Unbekannter Befehl. /hilfe zeigt alle Befehle.";
 }

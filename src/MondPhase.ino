@@ -19,6 +19,7 @@
 
 // ── Konfiguration ────────────────────────────────────────────────────────────
 
+#include "astro.h"
 #include "credentials.h"
 #include "clock_face.h"
 #include "display_mode.h"
@@ -34,12 +35,10 @@ constexpr char   NTP_SERVER[]    = "pool.ntp.org";
 extern void calculateMoon(const struct tm& timeinfo, bool printInfo, Adafruit_GC9A01A* tft);
 
 // Persistente Konfiguration (definiert in Config.ino)
-extern double configLatitude;
-extern double configLongitude;
+extern astro::GeoLocation configLocation;
 extern int    configDisplayOptions;
 extern bool   configAutoMode;
 extern int    configAutoTime;
-extern String configTimezone;
 extern int    configDisplayMode;
 extern void   loadConfig();
 extern void   saveConfig();
@@ -216,11 +215,11 @@ void cmd_set_location_(SerialCommands* sender)
         sender->GetSerial()->println("Ungültige Werte. Lat: -90..90, Lon: -180..180");
         return;
     }
-    configLatitude  = lat;
-    configLongitude = lon;
+    configLocation.latitude  = lat * astro::DEG2RAD;
+    configLocation.longitude = lon * astro::DEG2RAD;
     saveConfig();
     requestRedraw();
-    sender->GetSerial()->printf("Standort gespeichert: %.6f / %.6f\n", configLatitude, configLongitude);
+    sender->GetSerial()->printf("Standort gespeichert: %.6f / %.6f\n", lat, lon);
 }
 SerialCommand cmd_set_location("set_location", cmd_set_location_);
 
@@ -283,19 +282,19 @@ void cmd_set_timezone_(SerialCommands* sender)
         sender->GetSerial()->println("Ungültige Zeitzone. Beispiel: set_timezone CET-1CEST,M3.5.0,M10.5.0/3");
         return;
     }
-    configTimezone = arg0;
+    strlcpy(configLocation.timezone, arg0, sizeof(configLocation.timezone));
     saveConfig();
     resetAutoReportDay();
     requestRedraw();
-    sender->GetSerial()->printf("Zeitzone gespeichert: %s\n", configTimezone.c_str());
+    sender->GetSerial()->printf("Zeitzone gespeichert: %s\n", configLocation.timezone);
 }
 SerialCommand cmd_set_timezone("set_timezone", cmd_set_timezone_);
 
 void cmd_config_(SerialCommands* sender)
 {
     sender->GetSerial()->println("Aktuelle Konfiguration:");
-    sender->GetSerial()->printf("  Latitude:  %.6f\n", configLatitude);
-    sender->GetSerial()->printf("  Longitude: %.6f\n", configLongitude);
+    sender->GetSerial()->printf("  Latitude:  %.6f\n", configLocation.latitude * astro::RAD2DEG);
+    sender->GetSerial()->printf("  Longitude: %.6f\n", configLocation.longitude * astro::RAD2DEG);
     sender->GetSerial()->printf("  Options:   %d (0x%X)\n", configDisplayOptions, configDisplayOptions);
     sender->GetSerial()->printf("    [%c] darken_unlit    (1)\n",   (configDisplayOptions & 1) ? 'x' : ' ');
     sender->GetSerial()->printf("    [%c] bluish_tint     (2)\n",   (configDisplayOptions & 2) ? 'x' : ' ');
@@ -304,7 +303,7 @@ void cmd_config_(SerialCommands* sender)
     sender->GetSerial()->printf("    [%c] ignore_parallactic (16)\n", (configDisplayOptions & 16) ? 'x' : ' ');
     sender->GetSerial()->printf("    [%c] ignore_position_angle (32)\n", (configDisplayOptions & 32) ? 'x' : ' ');
     sender->GetSerial()->printf("  Auto-Modus: %s, täglich um %02d:%02d\n", configAutoMode ? "an" : "aus", configAutoTime / 60, configAutoTime % 60);
-    sender->GetSerial()->printf("  Zeitzone:  %s\n", configTimezone.c_str());
+    sender->GetSerial()->printf("  Zeitzone:  %s\n", configLocation.timezone);
     sender->GetSerial()->printf("  Anzeige:   %s\n", displayModeName());
 }
 SerialCommand cmd_config("config", cmd_config_);

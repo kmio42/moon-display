@@ -54,6 +54,7 @@
  */
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 
 namespace astro {
@@ -72,9 +73,19 @@ constexpr double EARTH_RADIUS = 6378.14;               // Äquatorradius der Erd
 constexpr double MOON_RADIUS = 1738.1;                 // Mondradius [km]
 constexpr double MOON_ORBIT_RADIUS = 384400.0;         // Mittlere Entfernung Erde–Mond [km]
 
+constexpr size_t TIMEZONE_CAPACITY = 64;               // Länge eines POSIX-TZ-Strings einschließlich Nullbyte
+
 // ---------------------------------------------------------------
 //  Datenstrukturen
 // ---------------------------------------------------------------
+
+// Beobachtungsort auf der Erde
+struct GeoLocation {
+    double longitude;                   // Geographische Länge [rad], Ost positiv
+    double latitude;                    // Geographische Breite φ [rad]
+    char timezone[TIMEZONE_CAPACITY];   // Zeitzone als POSIX-TZ-String, z. B. "CET-1CEST,M3.5.0,M10.5.0/3";
+                                        // nur für die Ausgabe in Lokalzeit, die Berechnungen laufen in UT
+};
 
 // Ekliptikale Koordinaten, bezogen auf das mittlere Äquinoktium des Datums
 struct Ecliptic {
@@ -107,12 +118,12 @@ struct MoonOrientation {
     double positionAngle;       // Positionswinkel der Mondachse P [rad]
 };
 
-// Aufgang, Meridiandurchgang, Untergang und höchster Stand eines Himmelskörpers an einem UT-Tag
+// Aufgang, Meridiandurchgang, Untergang und höchster Stand eines Himmelskörpers an einem UT-Tag.
+// Ohne Auf- und Untergang steht der Körper den ganzen Tag über (maxAltitude > 0) oder unter dem Horizont.
 struct RiseTransitSet {
     bool   hasRise;         // Aufgang an diesem UT-Tag
     bool   hasSet;          // Untergang an diesem UT-Tag
     bool   hasTransit;      // Meridiandurchgang (Stundenwinkel 0) an diesem UT-Tag
-    bool   aboveAtStart;    // Um 0 h UT über der Standardhöhe h0
     double rise;            // Aufgang [h UT]
     double set;             // Untergang [h UT]
     double transit;         // Meridiandurchgang [h UT]
@@ -157,6 +168,7 @@ double normalizeRadiansSigned(double angle);            // [rad] → (−π, π]
 double calculateJulianDate(int year, int month, int day, double hours);  // Julianischer Tag [JD]
 double calculateJulianCenturies(double jd);             // T seit J2000.0 [Julianische Jahrhunderte]
 double calculateGreenwichSiderealTime(double jd);       // Mittlere Sternzeit Greenwich θ0 [h]
+double calculateLocalSiderealTime(double jd, const GeoLocation& location);  // Lokale Sternzeit θ [rad]
 
 // Sonne und Erdbahn
 double calculateObliquity(double jd);                   // Mittlere Schiefe der Ekliptik ε0 [rad]
@@ -174,9 +186,9 @@ Equatorial calculateTopocentric(const Equatorial& equ, double parallax, double l
 // Interpolation
 double interpolate(double y1, double y2, double y3, double n);
 
-// Auf-/Untergang (geographische Länge Ost positiv, Breite [rad])
-RiseTransitSet calculateSunRiseSet(double jd, double longitude, double latitude);
-RiseTransitSet calculateMoonRiseSet(double jd, double longitude, double latitude);
+// Auf-/Untergang
+RiseTransitSet calculateSunRiseSet(double jd, const GeoLocation& location);
+RiseTransitSet calculateMoonRiseSet(double jd, const GeoLocation& location);
 
 // Solstitien und Äquinoktien [JDE], Perihel/Aphel der Erde
 double calculateEquinoxSolstice(int year, EquinoxType type);

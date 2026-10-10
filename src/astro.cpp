@@ -115,6 +115,17 @@ double calculateGreenwichSiderealTime(const double jd) {
     return normalizeDegrees(theta0) / 15.0;
 }
 
+/**
+ * Lokale Sternzeit θ = θ0 − L (Kapitel 12; dort ist die Länge L West positiv).
+ * @param jd Julianischer Tag [JD, UT]
+ * @param location Beobachtungsort (Länge Ost positiv)
+ * @return θ [rad], im Bereich [0, 2π)
+ */
+double calculateLocalSiderealTime(const double jd, const GeoLocation& location) {
+    const double theta = calculateGreenwichSiderealTime(jd) * 15.0 * DEG2RAD + location.longitude;
+    return fmod(theta + 2 * M_PI, 2 * M_PI);
+}
+
 // ---------------------------------------------------------------
 //  Sonne (Kapitel 21, 24, 27, 29)
 // ---------------------------------------------------------------
@@ -337,11 +348,12 @@ double interpolate(const double y1, const double y2, const double y3, const doub
  * Genäherte Zeiten von Sonnenaufgang, Meridiandurchgang und Sonnenuntergang, Formeln 14.1 und 14.2
  * (ohne die Korrekturen Δm). Rektaszension und Deklination gelten für 0h UT.
  * @param jd Julianischer Tag [JD] eines Zeitpunkts des gewünschten UT-Tags
- * @param longitude Geographische Länge [rad], Ost positiv
- * @param latitude Geographische Breite φ [rad]
+ * @param location Beobachtungsort
  * @return Zeiten [h UT]; bei Polartag oder Polarnacht weder Auf- noch Untergang
  */
-RiseTransitSet calculateSunRiseSet(const double jd, const double longitude, const double latitude) {
+RiseTransitSet calculateSunRiseSet(const double jd, const GeoLocation& location) {
+    const double latitude = location.latitude;
+
     // Standardhöhe der Sonne h0 = −0°50′ [rad]
     constexpr double h0 = -0.8333 * DEG2RAD;
 
@@ -351,16 +363,14 @@ RiseTransitSet calculateSunRiseSet(const double jd, const double longitude, cons
     const double theta0 = calculateGreenwichSiderealTime(midnight) * 15.0;
 
     // Formel 14.2, Durchgang m0 in Tagesbruchteilen; die Länge zählt im Buch West positiv
-    double m0 = fmod((sun.ra * RAD2DEG - longitude * RAD2DEG - theta0) / 360.0, 1.0);
+    double m0 = fmod((sun.ra * RAD2DEG - location.longitude * RAD2DEG - theta0) / 360.0, 1.0);
     m0 = fmod(m0 + 1.0, 1.0);
 
-    // Höhe um 0h UT (Formel 12.6) und beim Durchgang (H = 0) [rad]
-    const double altitudeAtStart = calculateHorizontal(sun, theta0 * DEG2RAD + longitude, latitude).altitude;
+    // Höhe beim Durchgang, Formel 12.6 mit H = 0 [rad]
     const double transitAltitude = asin(sin(latitude) * sin(sun.dec) + cos(latitude) * cos(sun.dec));
 
     RiseTransitSet result = {
         .hasRise = false, .hasSet = false, .hasTransit = true,
-        .aboveAtStart = altitudeAtStart > h0,
         .rise = 0.0, .set = 0.0, .transit = m0 * 24.0,
         .maxAltitude = transitAltitude - h0, .maxAltitudeTime = m0 * 24.0,
     };
@@ -1071,12 +1081,11 @@ struct MoonSample {
     double hourAngle;   // Stundenwinkel [rad], (−π, π]
 };
 
-MoonSample sampleMoon(const double jd, const double longitude, const double latitude) {
+MoonSample sampleMoon(const double jd, const GeoLocation& location) {
     const Ecliptic moon = calculateMoonPosition(jd);
     const Equatorial equ = calculateEquatorial(moon, calculateObliquity(jd));
-    // Lokale Sternzeit [rad]
-    const double siderealTime = calculateGreenwichSiderealTime(jd) * M_PI / 12.0 + longitude;
-    const Horizontal azh = calculateHorizontal(equ, siderealTime, latitude);
+    const double siderealTime = calculateLocalSiderealTime(jd, location);
+    const Horizontal azh = calculateHorizontal(equ, siderealTime, location.latitude);
 
     // Standardhöhe des Mondes h0 = 0.7275·π − 0°34′ (Kapitel 14) für die geozentrische Position;
     // berücksichtigt Horizontalparallaxe π, Halbmesser und Refraktion.
@@ -1094,14 +1103,13 @@ MoonSample sampleMoon(const double jd, const double longitude, const double lati
  * Parabel durch die Stützstellen k, k+1, k+2 gelegt, mit der Horizont- und Meridiandurchgänge
  * sowie der Scheitel innerhalb des Intervalls bestimmt werden.
  * @param jd Julianischer Tag [JD]
- * @param longitude Geographische Länge [rad], Ost positiv
- * @param latitude Geographische Breite [rad]
+ * @param location Beobachtungsort
  * @return Ereignisse [h UT] und höchste Höhe [rad]
  */
-RiseTransitSet calculateMoonRiseSet(const double jd, const double longitude, const double latitude) {
+RiseTransitSet calculateMoonRiseSet(const double jd, const GeoLocation& location) {
     const double midnight = round(jd) - 0.5;
     auto sampleAt = [&](int hour) {
-        return sampleMoon(midnight + hour / 24.0, longitude, latitude);
+        return sampleMoon(midnight + hour / 24.0, location);
     };
 
     // Gleitendes Fenster aus drei aufeinanderfolgenden Stunden k, k+1, k+2
@@ -1109,7 +1117,6 @@ RiseTransitSet calculateMoonRiseSet(const double jd, const double longitude, con
     MoonSample s1 = sampleAt(1);
 
     RiseTransitSet result = {};
-    result.aboveAtStart = s0.altitude > 0.0;
     result.maxAltitude = s0.altitude;
     result.maxAltitudeTime = 0.0;
 

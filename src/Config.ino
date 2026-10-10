@@ -3,12 +3,18 @@
 #include <time.h>
 #include <string.h>
 
+#include "astro.h"
 #include "display_mode.h"
 
 // Persistente Konfiguration (RAM-Kopie der NVS-Werte).
 // Defaults werden verwendet, wenn noch nichts im Flash gespeichert wurde.
-double configLatitude       = 51.0;
-double configLongitude      =  9.0;
+// Standort [rad] und Zeitzone als POSIX-TZ-String; die Zeitzone wird nur für die Ausgabe
+// verwendet (System läuft in UTC). Im Flash stehen Länge und Breite in Grad.
+astro::GeoLocation configLocation = {
+    .longitude = 9.0 * astro::DEG2RAD,
+    .latitude  = 51.0 * astro::DEG2RAD,
+    .timezone  = "CET-1CEST,M3.5.0,M10.5.0/3",
+};
 // Default: OPTION_DARKEN_UNLIT (1) | OPTION_USE_LIBRATION (8) = 9
 int    configDisplayOptions = 9;
 // Telegram Auto-Modus: täglicher Bericht zur Uhrzeit configAutoTime (Minuten nach Mitternacht, Lokalzeit)
@@ -16,42 +22,41 @@ bool   configAutoMode       = false;
 int    configAutoTime       = 7 * 60;
 // Anzeigemodus (display_mode.h)
 int    configDisplayMode    = DISPLAY_MODE_MOON;
-// Zeitzone als POSIX-TZ-String, wird nur für die Ausgabe verwendet (System läuft in UTC)
-String configTimezone       = "CET-1CEST,M3.5.0,M10.5.0/3";
 
 static Preferences prefs;
 static constexpr const char* PREFS_NAMESPACE = "moon-cfg";
 
 void loadConfig() {
     prefs.begin(PREFS_NAMESPACE, true);
-    configLatitude       = prefs.getDouble("lat",   configLatitude);
-    configLongitude      = prefs.getDouble("lon",   configLongitude);
+    configLocation.latitude  = prefs.getDouble("lat", configLocation.latitude  * astro::RAD2DEG) * astro::DEG2RAD;
+    configLocation.longitude = prefs.getDouble("lon", configLocation.longitude * astro::RAD2DEG) * astro::DEG2RAD;
     configDisplayOptions = prefs.getInt   ("opts",  configDisplayOptions);
     configAutoMode       = prefs.getBool  ("auto",  configAutoMode);
     configAutoTime       = prefs.getInt   ("atime", configAutoTime);
-    configTimezone       = prefs.getString("tz",    configTimezone);
+    const String tz      = prefs.getString("tz",    configLocation.timezone);
+    strlcpy(configLocation.timezone, tz.c_str(), sizeof(configLocation.timezone));
     configDisplayMode    = prefs.getInt   ("mode",  configDisplayMode);
     prefs.end();
 }
 
 void saveConfig() {
     prefs.begin(PREFS_NAMESPACE, false);
-    prefs.putDouble("lat",   configLatitude);
-    prefs.putDouble("lon",   configLongitude);
+    prefs.putDouble("lat",   configLocation.latitude  * astro::RAD2DEG);
+    prefs.putDouble("lon",   configLocation.longitude * astro::RAD2DEG);
     prefs.putInt   ("opts",  configDisplayOptions);
     prefs.putBool  ("auto",  configAutoMode);
     prefs.putInt   ("atime", configAutoTime);
-    prefs.putString("tz",    configTimezone);
+    prefs.putString("tz",    configLocation.timezone);
     prefs.putInt   ("mode",  configDisplayMode);
     prefs.end();
 }
 
 // Länge eines TZ-Strings einschließlich Nullbyte
-constexpr size_t TZ_CAPACITY = 64;
+constexpr size_t TZ_CAPACITY = astro::TIMEZONE_CAPACITY;
 static char* tzBuffer = nullptr;
 
 // Setzt die System-Zeitzone. setenv() in newlib gibt den alten Wert nicht frei, wenn der neue
-// länger ist; beim ständigen Wechsel zwischen configTimezone und "UTC0" ging so bei jedem Aufruf ein
+// länger ist; beim ständigen Wechsel zwischen configLocation.timezone und "UTC0" ging so bei jedem Aufruf ein
 // Puffer verloren, bis der Heap leer war. Deshalb bekommt TZ einmal einen Puffer mit TZ_CAPACITY
 // Zeichen, der danach nur noch überschrieben wird. Hat jemand anderes TZ neu gesetzt (configTime),
 // wird der Puffer neu angelegt.
@@ -67,10 +72,10 @@ static void setTimezone(const char* tz) {
     tzset();
 }
 
-// Wandelt eine UTC-Zeit in Lokalzeit (configTimezone) um.
+// Wandelt eine UTC-Zeit in Lokalzeit (configLocation.timezone) um.
 // Die System-Zeitzone wird nur kurz umgestellt und danach wieder auf UTC gesetzt.
 void utcToLocal(time_t t, struct tm& out) {
-    setTimezone(configTimezone.c_str());
+    setTimezone(configLocation.timezone);
     localtime_r(&t, &out);
     setTimezone("UTC0");
 }

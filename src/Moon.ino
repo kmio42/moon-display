@@ -6,8 +6,7 @@
 #include "moon_render.h"
 
 // Standort (Dezimalgrad) und Darstellungsoptionen – persistent in Config.ino
-extern double configLatitude;
-extern double configLongitude;
+extern astro::GeoLocation configLocation;
 extern int    configDisplayOptions;
 
 // ── Timing-Makros für die Performance-Analyse ─────────────────────────────────────────
@@ -81,7 +80,7 @@ void berechneSonnenaufgang() {
         zeitInfo.tm_mday,
         0.0);
 
-    astro::RiseTransitSet s = astro::calculateSunRiseSet(jd, configLongitude * astro::DEG2RAD, configLatitude * astro::DEG2RAD);
+    astro::RiseTransitSet s = astro::calculateSunRiseSet(jd, configLocation);
 
     if (!s.hasRise) {
         Serial.println("  Sonnenauf/-untergang: Polartag oder Polarnacht.");
