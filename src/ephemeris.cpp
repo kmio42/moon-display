@@ -76,31 +76,41 @@ static JulianDay utMidnight(time_t t) {
     return JulianDay::fromUnixTime(t).midnight();
 }
 
-constexpr int MOON_CACHE_DAYS = 6;
+// Zwischenspeicher für Mondauf-/-untergang. Uhr und Tagesbericht brauchen dieselben UT-Tage mehrfach
+// (je Tag ca. 0,2 s auf dem ESP32-C3); die Uhr höchstens 5 (gestern bis morgen, im Winter je 3 UT-Tage).
+constexpr int MOON_CACHE_DAYS = 5;
 
-// Mondauf-/-untergang des UT-Tags ab jd0 (UT-Mitternacht). Die letzten Tage werden zwischengespeichert,
-// da Uhr und Tagesbericht dieselben UT-Tage mehrfach brauchen (je Tag ca. 0,2 s auf dem ESP32-C3).
-// Nach einer Standortänderung passen die alten Einträge nicht mehr und werden nach und nach ersetzt.
-static astro::RiseTransitSet moonRiseSetForUtDay(JulianDay jd0) {
-    struct Entry {
-        double jd0;         // UT-Mitternacht [JD], 0 = leer
-        Angle latitude, longitude;
-        double elevation;   // [m]
-        astro::RiseTransitSet events;
-    };
-    static Entry cache[MOON_CACHE_DAYS];
-    static int next = 0;
+struct MoonCacheEntry {
+    int32_t day;                    // ganzzahliger Teil der JD der UT-Mitternacht, 0 = leer
+    astro::RiseTransitSet events;
+};
 
-    for (const Entry& e : cache) {
-        if (e.jd0 == jd0.value() && e.latitude == configLocation.latitude
-            && e.longitude == configLocation.longitude && e.elevation == configLocation.elevation) {
-            return e.events;
-        }
+static struct {
+    Angle latitude, longitude;      // Standort, für den die Einträge gelten
+    double elevation;               // [m]
+    MoonCacheEntry entries[MOON_CACHE_DAYS];
+    int next;                       // als Nächstes zu ersetzender Eintrag
+} moonCache;
+
+// Mondauf-/-untergang des UT-Tags ab jd0 (UT-Mitternacht). Die Referenz gilt bis zum nächsten Aufruf.
+static const astro::RiseTransitSet& moonRiseSetForUtDay(JulianDay jd0) {
+    // Nach einer Standortänderung alle Einträge verwerfen
+    if (!(moonCache.latitude == configLocation.latitude && moonCache.longitude == configLocation.longitude
+          && moonCache.elevation == configLocation.elevation)) {
+        for (MoonCacheEntry& e : moonCache.entries) e.day = 0;
+        moonCache.latitude  = configLocation.latitude;
+        moonCache.longitude = configLocation.longitude;
+        moonCache.elevation = configLocation.elevation;
     }
-    Entry& e = cache[next];
-    next = (next + 1) % MOON_CACHE_DAYS;
-    e = { jd0.value(), configLocation.latitude, configLocation.longitude, configLocation.elevation,
-          astro::calculateMoonRiseSet(jd0 + 0.5, configLocation) };
+
+    const int32_t day = static_cast<int32_t>(jd0.value());
+    for (const MoonCacheEntry& e : moonCache.entries) {
+        if (e.day == day) return e.events;
+    }
+    MoonCacheEntry& e = moonCache.entries[moonCache.next];
+    moonCache.next = (moonCache.next + 1) % MOON_CACHE_DAYS;
+    e.day = day;
+    e.events = astro::calculateMoonRiseSet(jd0 + 0.5, configLocation);
     return e.events;
 }
 
@@ -126,7 +136,7 @@ DayEvents eventsForLocalDay(time_t t, bool withMoon) {
         if (sun.hasRise) takeEvent(jd0, sun.rise, localDay, e.hasSunrise, e.sunrise);
         if (sun.hasSet)  takeEvent(jd0, sun.set,  localDay, e.hasSunset,  e.sunset);
         if (withMoon) {
-            const astro::RiseTransitSet moon = moonRiseSetForUtDay(jd0);
+            const astro::RiseTransitSet& moon = moonRiseSetForUtDay(jd0);
             if (moon.hasRise)    takeEvent(jd0, moon.rise,    localDay, e.hasMoonrise,    e.moonrise);
             if (moon.hasSet)     takeEvent(jd0, moon.set,     localDay, e.hasMoonset,     e.moonset);
             if (moon.hasTransit) takeEvent(jd0, moon.transit, localDay, e.hasMoonTransit, e.moonTransit);
@@ -158,7 +168,7 @@ static Angle culminationHeight(time_t t) {
     const JulianDay jdFirst = utMidnight(dayStart - 3600);
     const JulianDay jdLast  = utMidnight(dayStart + 86400 + 3600);
     for (JulianDay jd0 = jdFirst; jd0 <= jdLast + 0.1; jd0 = jd0 + 1.0) {
-        const astro::RiseTransitSet moon = moonRiseSetForUtDay(jd0);
+        const astro::RiseTransitSet& moon = moonRiseSetForUtDay(jd0);
         if (moon.hasTransit) takeEvent(jd0, moon.transit, localDay, found, transit);
     }
 
